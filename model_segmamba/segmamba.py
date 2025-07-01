@@ -196,9 +196,9 @@ class SegMamba(nn.Module):
     def __init__(
         self,
         in_chans=1,
-        out_chans=13,
+        out_chans=2,
         depths=[2, 2, 2, 2],
-        feat_size=[48, 96, 192, 384],
+        feat_size=[24, 48, 96, 192],
         drop_path_rate=0,
         layer_scale_init_value=1e-6,
         hidden_size: int = 768,
