@@ -69,30 +69,30 @@ class LiverTrainer(Trainer):
     def train_step(self, batch):
         data = batch["data"].to(self.device, non_blocking=True)
         label = batch["seg"].to(self.device, non_blocking=True)
+        label = label.long()
+        if label.dim() == 5:
+            label = label.squeeze(1)
     
-        label = label.long().squeeze(1) 
         logits = self.model(data)
         loss = self.loss(logits, label)
-    
         return loss
 
 
 
     def validation_step(self, batch):
         data = batch["data"].to(self.device, non_blocking=True)
-        label = batch["seg"].as_tensor().to(self.device, non_blocking=True)
-        label = label[:, 0].long()
+        label = batch["seg"].to(self.device, non_blocking=True)
+        label = label.long()
+        if label.dim() == 5:
+            label = label.squeeze(1)
     
         with torch.no_grad():
             logits = self.inferer(data, self.model)
             preds = torch.argmax(logits, dim=1)
             dice_value = dice(preds.cpu().numpy(), label.cpu().numpy())
     
-        # 🔁 Limpieza explícita
-        torch.cuda.empty_cache()
-        gc.collect()
-    
         return dice_value
+
 
     def cal_metric(self, gt, pred):
         if pred.sum() > 0 and gt.sum() > 0:
