@@ -43,7 +43,7 @@ class LiverTrainer(Trainer):
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-5)
         self.scheduler = LinearWarmupCosineAnnealingLR(self.optimizer, warmup_epochs=20, max_epochs=self.max_epochs)
         self.inferer = SlidingWindowInferer(
-            roi_size=[128, 128, 128],
+            roi_size=[96, 96, 96],
             sw_batch_size=1, 
         )
 
@@ -69,16 +69,19 @@ class LiverTrainer(Trainer):
     def train_step(self, batch):
         data = batch["data"].to(self.device, non_blocking=True)
         label = batch["seg"].to(self.device, non_blocking=True)
-        
-        # 🔁 Asegura que tenga shape [B, 1, D, H, W] para one-hot
-        if label.dim() == 4:
-            label = label.unsqueeze(1)
-        
-        label = label.long()
-        label = (label > 0).long()
-        logits = self.model(data)
-        loss = self.loss(logits, label)
+        label = (label > 0).long()  # asegúrate de tener clases válidas (0,1)
+    
+        with torch.cuda.amp.autocast():  # 🔁 Mixed precision
+            logits = self.model(data)
+            loss = self.loss(logits, label)
+    
+        self.scaler.scale(loss).backward()         # backward
+        self.scaler.step(self.optimizer)           # optimizer step
+        self.scaler.update()                       # update scaler
+        self.optimizer.zero_grad()
+    
         return loss
+
 
 
     def validation_step(self, batch):
