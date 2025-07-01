@@ -68,16 +68,14 @@ class LiverTrainer(Trainer):
 
     def train_step(self, batch):
         data = batch["data"].to(self.device, non_blocking=True)
-        label = batch["seg"].as_tensor().to(self.device, non_blocking=True)
-        label = label[:, 0].long()
+        label = batch["seg"].to(self.device, non_blocking=True)
     
+        label = label.long().squeeze(1) 
         logits = self.model(data)
         loss = self.loss(logits, label)
     
-        loss_value = loss.item()
-        del loss, data, label, logits
-        torch.cuda.empty_cache()
-        return torch.tensor(loss_value, requires_grad=True)
+        return loss
+
 
 
     def validation_step(self, batch):
