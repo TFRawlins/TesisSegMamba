@@ -93,12 +93,12 @@ class MedicalDataset(Dataset):
             return {
                 "data": image,
                 "seg": seg,
-                "properties": properties
+                "properties": str(properties)
             }
         else:
             return {
                 "data": image,
-                "properties": properties
+                "properties": str(properties)
             }
     def __len__(self):
         return len(self.datalist)
