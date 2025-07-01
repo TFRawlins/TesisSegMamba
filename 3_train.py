@@ -34,7 +34,7 @@ class LiverTrainer(Trainer):
             depths=[2, 2, 2, 2],
             feat_size=[48, 96, 192, 384]
         )
-
+        self.model.to(self.device)
         self.loss = DiceCELoss(to_onehot_y=True, softmax=True)
         self.metric = DiceMetric(include_background=False, reduction="mean")
         self.max_epochs = max_epochs
