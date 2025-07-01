@@ -71,18 +71,12 @@ class LiverTrainer(Trainer):
         data = batch["data"].to(self.device, non_blocking=True)
         label = batch["seg"].to(self.device, non_blocking=True)
         label = (label > 0).long()  # asegúrate de tener clases válidas (0,1)
-        print("📦 Model device:", next(self.model.parameters()).device)
-        print("📤 Data device:", data.device)
-        print("🎯 Label device:", label.device)
         with torch.cuda.amp.autocast():  # 🔁 Mixed precision
             logits = self.model(data)
-            print(f"✅ Model inference done, logits shape: {logits.shape}")
             loss = self.loss(logits, label)
             print(f"✅ Loss computed: {loss.item():.4f}")
     
-        print("⬅️  Haciendo backward...")
-        self.scaler.scale(loss).backward()
-        print("✅ backward() hecho")        # backward
+        self.scaler.scale(loss).backward()     # backward
         self.scaler.step(self.optimizer)           # optimizer step
         self.scaler.update()                       # update scaler
         self.optimizer.zero_grad()
