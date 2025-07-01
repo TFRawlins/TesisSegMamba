@@ -44,7 +44,7 @@ class LiverTrainer(Trainer):
         self.scheduler = LinearWarmupCosineAnnealingLR(self.optimizer, warmup_epochs=20, max_epochs=self.max_epochs)
         self.inferer = SlidingWindowInferer(
             roi_size=[192, 192, 192],
-            sw_batch_size=4, 
+            sw_batch_size=2, 
         )
 
         self.best_metric = 0
