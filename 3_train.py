@@ -52,29 +52,35 @@ class LiverTrainer(Trainer):
 
         # Datos
         train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
-        self.train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True)
+        
+        def custom_collate_fn(batch):
+            return {
+                "data": torch.stack([x["data"] for x in batch]),
+                "seg": torch.stack([x["seg"] for x in batch]),
+                "properties": [x["properties"] for x in batch]
+            }
+        
+        self.train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True, collate_fn=custom_collate_fn)
         self.val_loader = DataLoader(val_ds, batch_size=1)
         self.test_loader = DataLoader(test_ds, batch_size=1)
-
+    
     def train_step(self, batch):
-        data, label = batch["image"], batch["label"]
-        label = label[:, 0].long()  # Elimina canal extra
+        data, label = batch["data"], batch["seg"]
+        label = label[:, 0].long()
         logits = self.model(data)
         loss = self.loss(logits, label)
         return loss
 
     def validation_step(self, batch):
-        data, label = batch["image"], batch["label"]
+        data, label = batch["data"], batch["seg"]
         label = label[:, 0].long()
-
         with torch.no_grad():
             logits = self.inferer(data, self.model)
             preds = torch.argmax(logits, dim=1)
             dice_value = dice(preds.cpu().numpy(), label.cpu().numpy())
             return dice_value
-
-    def test_step(self, batch):
-        return self.validation_step(batch)
+        def test_step(self, batch):
+            return self.validation_step(batch)
 
     def cal_metric(self, gt, pred):
         if pred.sum() > 0 and gt.sum() > 0:
