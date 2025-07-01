@@ -8,7 +8,7 @@ from monai.utils import set_determinism
 
 set_determinism(123)
 
-data_dir = "./data/fullres/train"
+data_dir = "/workspace/data/content/data/fullres/train"
 patch_size = [64, 64, 64]
 save_path = "./prediction_results/segmamba_liver"
 model_path = "./ckpts_seg/best_model.pt"
