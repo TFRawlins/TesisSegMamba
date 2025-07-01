@@ -13,7 +13,7 @@ from light_training.evaluation.metric import dice
 from light_training.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 
 class LiverTrainer(Trainer):
-    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=400, batch_size=2):
+    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=400, batch_size=4):
         super().__init__(
             env_type="pytorch",
             max_epochs=max_epochs,
@@ -50,9 +50,9 @@ class LiverTrainer(Trainer):
         self.best_metric_epoch = -1
 
         # Datos
-        self.train_loader, self.val_loader, self.test_loader = get_train_val_test_loader_from_train(
-            data_dir, batch_size=self.batch_size, fold=0
-        )
+        self.train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True)
+        self.val_loader = DataLoader(val_ds, batch_size=1)
+        self.test_loader = DataLoader(test_ds, batch_size=1)
 
     def train_step(self, batch):
         data, label = batch["image"], batch["label"]
