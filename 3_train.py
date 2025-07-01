@@ -151,7 +151,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=True, help="Ruta a datos preprocesados")
     parser.add_argument("--save_dir", type=str, default="./ckpts_seg", help="Donde guardar el modelo")
-    parser.add_argument("--epochs", type=int, default=400)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=2)
     args = parser.parse_args()
 
