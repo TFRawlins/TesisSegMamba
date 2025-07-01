@@ -32,7 +32,7 @@ class LiverTrainer(Trainer):
             in_chans=1,
             out_chans=2,
             depths=[2, 2, 2, 2],
-            feat_size=[48, 96, 192, 384]
+            feat_size=[24, 48, 96, 192]
         )
         self.model.to(self.device)
         self.loss = DiceCELoss(to_onehot_y=True, softmax=True)
@@ -67,7 +67,7 @@ class LiverTrainer(Trainer):
     import gc
 
     def train_step(self, batch):
-        data = batch["data"].as_tensor().to(self.device, non_blocking=True)
+        data = batch["data"].to(self.device, non_blocking=True)
         label = batch["seg"].as_tensor().to(self.device, non_blocking=True)
         label = label[:, 0].long()
     
@@ -81,7 +81,7 @@ class LiverTrainer(Trainer):
         return loss
 
     def validation_step(self, batch):
-        data = batch["data"].as_tensor().to(self.device, non_blocking=True)
+        data = batch["data"].to(self.device, non_blocking=True)
         label = batch["seg"].as_tensor().to(self.device, non_blocking=True)
         label = label[:, 0].long()
     
