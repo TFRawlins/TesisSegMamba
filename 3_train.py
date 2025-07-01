@@ -74,11 +74,11 @@ class LiverTrainer(Trainer):
         logits = self.model(data)
         loss = self.loss(logits, label)
     
-        # 🔁 Limpieza explícita
+        loss_value = loss.item()
+        del loss, data, label, logits
         torch.cuda.empty_cache()
-        gc.collect()
-    
-        return loss
+        return torch.tensor(loss_value, requires_grad=True)
+
 
     def validation_step(self, batch):
         data = batch["data"].to(self.device, non_blocking=True)
