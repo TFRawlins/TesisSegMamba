@@ -316,8 +316,8 @@ class SegMamba(nn.Module):
             norm_name=norm_name,
             res_block=res_block,
         )
-        self.out = UnetOutBlock(spatial_dims=spatial_dims, in_channels=48, out_channels=self.out_chans)
-
+        self.out = UnetOutBlock(spatial_dims=spatial_dims, in_channels=self.feat_size[0], out_channels=self.out_chans)
+        
     def proj_feat(self, x):
         new_view = [x.size(0)] + self.proj_view_shape
         x = x.view(new_view)
