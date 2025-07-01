@@ -51,6 +51,7 @@ class LiverTrainer(Trainer):
         self.best_metric_epoch = -1
 
         # Datos
+        train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
         self.train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True)
         self.val_loader = DataLoader(val_ds, batch_size=1)
         self.test_loader = DataLoader(test_ds, batch_size=1)
