@@ -14,7 +14,7 @@ from light_training.evaluation.metric import dice
 from light_training.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 
 class LiverTrainer(Trainer):
-    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=400, batch_size=4):
+    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=400, batch_size=2):
         super().__init__(
             env_type="pytorch",
             max_epochs=max_epochs,
