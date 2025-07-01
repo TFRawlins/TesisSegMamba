@@ -14,7 +14,15 @@ from light_training.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 
 class LiverTrainer(Trainer):
     def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=400, batch_size=2):
-        super().__init__()
+        super().__init__(
+            env_type="pytorch",
+            max_epochs=max_epochs,
+            batch_size=batch_size,
+            device="cuda:0",
+            val_every=1,
+            num_gpus=1,
+            logdir=save_dir
+        )
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
 
@@ -33,7 +41,10 @@ class LiverTrainer(Trainer):
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-5)
         self.scheduler = LinearWarmupCosineAnnealingLR(self.optimizer, warmup_epochs=20, max_epochs=self.max_epochs)
-        self.inferer = SlidingWindowInferer(roi_size=[96, 96, 96], sw_batch_size=1, overlap=0.5)
+        self.inferer = SlidingWindowInferer(
+            roi_size=[192, 192, 192],
+            sw_batch_size=4, 
+        )
 
         self.best_metric = 0
         self.best_metric_epoch = -1
