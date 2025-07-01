@@ -67,10 +67,13 @@ class LiverTrainer(Trainer):
     import gc
 
     def train_step(self, batch):
+
         data = batch["data"].to(self.device, non_blocking=True)
         label = batch["seg"].to(self.device, non_blocking=True)
         label = (label > 0).long()  # asegúrate de tener clases válidas (0,1)
-    
+        print("📦 Model device:", next(self.model.parameters()).device)
+        print("📤 Data device:", data.device)
+        print("🎯 Label device:", label.device)
         with torch.cuda.amp.autocast():  # 🔁 Mixed precision
             logits = self.model(data)
             loss = self.loss(logits, label)
