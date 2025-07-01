@@ -10,6 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from sklearn.model_selection import KFold  ## K折交叉验证
+from monai.transforms import Resize
 import pickle
 import os
 import json
@@ -64,6 +65,11 @@ class MedicalDataset(Dataset):
     
     def post(self, batch_data):
         return batch_data
+
+    def resize(self, tensor, spatial_size=(192, 192, 192)):
+        resize_op = Resize(spatial_size=spatial_size, mode="trilinear" if tensor.dtype == torch.float32 else "nearest")
+        return resize_op(tensor)
+
     
     def read_data(self, data_path):
         
@@ -77,24 +83,24 @@ class MedicalDataset(Dataset):
         return image_data, seg_data
 
     def __getitem__(self, i):
-        image, image_data_global, seg, seg_global = self.read_data(self.datalist[i])
+        image, seg = self.read_data(self.datalist[i])
         properties = self.data_cached[i]
-
-        image = torch.tensor(image).unsqueeze(0)  # [C, D, H, W]
+    
+        image = torch.tensor(image, dtype=torch.float32).unsqueeze(0)  # [C=1, D, H, W]
         image = self.resize(image)
-
+    
         if seg is not None:
-            seg = torch.tensor(seg).unsqueeze(0)
+            seg = torch.tensor(seg, dtype=torch.uint8).unsqueeze(0)
             seg = self.resize(seg)
-
+    
             return {
-                "image": image,
-                "label": seg,
+                "data": image,
+                "seg": seg,
                 "properties": properties
             }
         else:
             return {
-                "image": image,
+                "data": image,
                 "properties": properties
             }
 
