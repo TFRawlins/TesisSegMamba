@@ -1,168 +1,92 @@
-import numpy as np
-from light_training.dataloading.dataset import get_train_val_test_loader_from_train
-import torch 
-import torch.nn as nn 
-from monai.inferers import SlidingWindowInferer
-from light_training.evaluation.metric import dice
-from light_training.trainer import Trainer
-from monai.utils import set_determinism
-from light_training.utils.files_helper import save_new_model_and_delete_last
-from monai.losses.dice import DiceLoss
-set_determinism(123)
 import os
+import argparse
+import torch
+import numpy as np
+from monai.inferers import SlidingWindowInferer
+from monai.losses import DiceCELoss
+from monai.data import decollate_batch
+from monai.metrics import DiceMetric
+from light_training.trainers.default import Trainer
+from model_segmamba.segmamba import SegMamba
+from datautils.build import get_train_val_test_loader_from_train
+from utils.utils import dice
+from utils.schedulers import LinearWarmupCosineAnnealingLR
 
-data_dir = "./data/fullres/train"
-logdir = f"./logs/segmamba"
+class LiverTrainer(Trainer):
+    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=400, batch_size=2):
+        super().__init__()
+        self.save_dir = save_dir
+        os.makedirs(self.save_dir, exist_ok=True)
 
-model_save_path = os.path.join(logdir, "model")
-# augmentation = "nomirror"
-augmentation = True
+        # Modelo para imágenes CT de 1 canal y 2 clases (fondo, hígado)
+        self.model = SegMamba(
+            in_chans=1,
+            out_chans=2,
+            depths=[2, 2, 2, 2],
+            feat_size=[48, 96, 192, 384]
+        )
 
-env = "pytorch"
-max_epoch = 1000
-batch_size = 2
-val_every = 2
-num_gpus = 1
-device = "cuda:0"
-roi_size = [128, 128, 128]
+        self.loss = DiceCELoss(to_onehot_y=True, softmax=True)
+        self.metric = DiceMetric(include_background=False, reduction="mean")
+        self.max_epochs = max_epochs
+        self.batch_size = batch_size
 
-def func(m, epochs):
-    return np.exp(-10*(1- m / epochs)**2)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-5)
+        self.scheduler = LinearWarmupCosineAnnealingLR(self.optimizer, warmup_epochs=20, max_epochs=self.max_epochs)
+        self.inferer = SlidingWindowInferer(roi_size=[96, 96, 96], sw_batch_size=1, overlap=0.5)
 
-class BraTSTrainer(Trainer):
-    def __init__(self, env_type, max_epochs, batch_size, device="cpu", val_every=1, num_gpus=1, logdir="./logs/", master_ip='localhost', master_port=17750, training_script="train.py"):
-        super().__init__(env_type, max_epochs, batch_size, device, val_every, num_gpus, logdir, master_ip, master_port, training_script)
-        self.window_infer = SlidingWindowInferer(roi_size=roi_size,
-                                        sw_batch_size=1,
-                                        overlap=0.5)
-        self.augmentation = augmentation
-        from model_segmamba.segmamba import SegMamba
+        self.best_metric = 0
+        self.best_metric_epoch = -1
 
-        self.model = SegMamba(in_chans=4,
-                        out_chans=4,
-                        depths=[2,2,2,2],
-                        feat_size=[48, 96, 192, 384])
+        # Datos
+        self.train_loader, self.val_loader, self.test_loader = get_train_val_test_loader_from_train(
+            data_dir, batch_size=self.batch_size, fold=0
+        )
 
-        self.patch_size = roi_size
-        self.best_mean_dice = 0.0
-        self.ce = nn.CrossEntropyLoss() 
-        self.mse = nn.MSELoss()
-        self.train_process = 18
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-2, weight_decay=3e-5,
-                                    momentum=0.99, nesterov=True)
-        
-        self.scheduler_type = "poly"
-        self.cross = nn.CrossEntropyLoss()
+    def train_step(self, batch):
+        data, label = batch["image"], batch["label"]
+        label = label[:, 0].long()  # Elimina canal extra
+        logits = self.model(data)
+        loss = self.loss(logits, label)
+        return loss
 
-    def training_step(self, batch):
-        image, label = self.get_input(batch)
-        
-        pred = self.model(image)
-
-        loss = self.cross(pred, label)
-
-        self.log("training_loss", loss, step=self.global_step)
-
-        return loss 
-    
-    def convert_labels(self, labels):
-        ## TC, WT and ET
-        result = [(labels == 1) | (labels == 3), (labels == 1) | (labels == 3) | (labels == 2), labels == 3]
-        
-        return torch.cat(result, dim=1).float()
-
-    
-    def get_input(self, batch):
-        image = batch["data"]
-        label = batch["seg"]
-    
-        label = label[:, 0].long()
-        return image, label
-
-    def cal_metric(self, gt, pred, voxel_spacing=[1.0, 1.0, 1.0]):
-        if pred.sum() > 0 and gt.sum() > 0:
-            d = dice(pred, gt)
-            return np.array([d, 50])
-        
-        elif gt.sum() == 0 and pred.sum() == 0:
-            return np.array([1.0, 50])
-        
-        else:
-            return np.array([0.0, 50])
-    
     def validation_step(self, batch):
-        image, label = self.get_input(batch)
-       
-        output = self.model(image)
+        data, label = batch["image"], batch["label"]
+        label = label[:, 0].long()
 
-        output = output.argmax(dim=1)
+        with torch.no_grad():
+            logits = self.inferer(data, self.model)
+            preds = torch.argmax(logits, dim=1)
+            dice_value = dice(preds.cpu().numpy(), label.cpu().numpy())
+            return dice_value
 
-        output = output[:, None]
-        output = self.convert_labels(output)
+    def test_step(self, batch):
+        return self.validation_step(batch)
 
-        label = label[:, None]
-        label = self.convert_labels(label)
+    def cal_metric(self, gt, pred):
+        if pred.sum() > 0 and gt.sum() > 0:
+            return np.array([dice(pred, gt), 0])
+        elif gt.sum() == 0 and pred.sum() == 0:
+            return np.array([1.0, 0])
+        else:
+            return np.array([0.0, 0])
 
-        output = output.cpu().numpy()
-        target = label.cpu().numpy()
-        
-        dices = []
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_dir", type=str, required=True, help="Ruta a datos preprocesados")
+    parser.add_argument("--save_dir", type=str, default="./ckpts_seg", help="Donde guardar el modelo")
+    parser.add_argument("--epochs", type=int, default=400)
+    parser.add_argument("--batch_size", type=int, default=2)
+    args = parser.parse_args()
 
-        c = 3
-        for i in range(0, c):
-            pred_c = output[:, i]
-            target_c = target[:, i]
-
-            cal_dice, _ = self.cal_metric(target_c, pred_c)
-            dices.append(cal_dice)
-        
-        return dices
-    
-    def validation_end(self, val_outputs):
-        dices = val_outputs
-
-        tc, wt, et = dices[0].mean(), dices[1].mean(), dices[2].mean()
-
-        print(f"dices is {tc, wt, et}")
-
-        mean_dice = (tc + wt + et) / 3 
-        
-        self.log("tc", tc, step=self.epoch)
-        self.log("wt", wt, step=self.epoch)
-        self.log("et", et, step=self.epoch)
-
-        self.log("mean_dice", mean_dice, step=self.epoch)
-
-        if mean_dice > self.best_mean_dice:
-            self.best_mean_dice = mean_dice
-            save_new_model_and_delete_last(self.model, 
-                                            os.path.join(model_save_path, 
-                                            f"best_model_{mean_dice:.4f}.pt"), 
-                                            delete_symbol="best_model")
-
-        save_new_model_and_delete_last(self.model, 
-                                        os.path.join(model_save_path, 
-                                        f"final_model_{mean_dice:.4f}.pt"), 
-                                        delete_symbol="final_model")
-
-
-        if (self.epoch + 1) % 100 == 0:
-            torch.save(self.model.state_dict(), os.path.join(model_save_path, f"tmp_model_ep{self.epoch}_{mean_dice:.4f}.pt"))
-
-        print(f"mean_dice is {mean_dice}")
+    trainer = LiverTrainer(
+        data_dir=args.data_dir,
+        save_dir=args.save_dir,
+        max_epochs=args.epochs,
+        batch_size=args.batch_size
+    )
+    trainer.run()
 
 if __name__ == "__main__":
+    main()
 
-    trainer = BraTSTrainer(env_type=env,
-                            max_epochs=max_epoch,
-                            batch_size=batch_size,
-                            device=device,
-                            logdir=logdir,
-                            val_every=val_every,
-                            num_gpus=num_gpus,
-                            master_port=17759,
-                            training_script=__file__)
-
-    train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
-
-    trainer.train(train_dataset=train_ds, val_dataset=val_ds)
