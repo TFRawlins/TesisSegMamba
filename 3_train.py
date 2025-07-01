@@ -65,22 +65,20 @@ class LiverTrainer(Trainer):
         self.test_loader = DataLoader(test_ds, batch_size=1)
     
     def train_step(self, batch):
-        data, label = batch["data"], batch["seg"]
+        data, label = batch["data"].to(self.device), batch["seg"].to(self.device)
         label = label[:, 0].long()
         logits = self.model(data)
         loss = self.loss(logits, label)
         return loss
 
     def validation_step(self, batch):
-        data, label = batch["data"], batch["seg"]
+        data, label = batch["data"].to(self.device), batch["seg"].to(self.device)
         label = label[:, 0].long()
         with torch.no_grad():
             logits = self.inferer(data, self.model)
             preds = torch.argmax(logits, dim=1)
             dice_value = dice(preds.cpu().numpy(), label.cpu().numpy())
             return dice_value
-        def test_step(self, batch):
-            return self.validation_step(batch)
 
     def cal_metric(self, gt, pred):
         if pred.sum() > 0 and gt.sum() > 0:
