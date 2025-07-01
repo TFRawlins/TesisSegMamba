@@ -60,9 +60,9 @@ class LiverTrainer(Trainer):
                 "properties": [x["properties"] for x in batch]
             }
         
-        self.train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True, collate_fn=custom_collate_fn)
-        self.val_loader = DataLoader(val_ds, batch_size=1)
-        self.test_loader = DataLoader(test_ds, batch_size=1)
+        self.train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True, collate_fn=custom_collate_fn, pin_memory=True)
+        self.val_loader = DataLoader(val_ds, batch_size=1, pin_memory=True)
+        self.test_loader = DataLoader(test_ds, batch_size=1, pin_memory=True)
     
     import gc
 
