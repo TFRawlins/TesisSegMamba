@@ -43,7 +43,7 @@ class LiverTrainer(Trainer):
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-5)
         self.scheduler = LinearWarmupCosineAnnealingLR(self.optimizer, warmup_epochs=20, max_epochs=self.max_epochs)
         self.inferer = SlidingWindowInferer(
-            roi_size=[96, 96, 96],
+            roi_size=[64, 64, 64],
             sw_batch_size=1, 
         )
 
@@ -76,7 +76,9 @@ class LiverTrainer(Trainer):
         print("🎯 Label device:", label.device)
         with torch.cuda.amp.autocast():  # 🔁 Mixed precision
             logits = self.model(data)
+            print(f"✅ Model inference done, logits shape: {logits.shape}")
             loss = self.loss(logits, label)
+            print(f"✅ Loss computed: {loss.item():.4f}")
     
         self.scaler.scale(loss).backward()         # backward
         self.scaler.step(self.optimizer)           # optimizer step
