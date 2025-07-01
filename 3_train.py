@@ -10,7 +10,7 @@ from light_training.trainer import Trainer
 from model_segmamba.segmamba import SegMamba
 from light_training.dataloading.dataset import get_train_val_test_loader_from_train
 from light_training.evaluation.metric import dice
-from utils.schedulers import LinearWarmupCosineAnnealingLR
+from light_training.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 
 class LiverTrainer(Trainer):
     def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=400, batch_size=2):
