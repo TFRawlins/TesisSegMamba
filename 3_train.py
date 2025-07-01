@@ -32,7 +32,7 @@ class LiverTrainer(Trainer):
             in_chans=1,
             out_chans=2,
             depths=[2, 2, 2, 2],
-            feat_size=[16, 32, 64, 128]
+            feat_size=[24, 48, 96, 192]
         )
         self.model.to(self.device)
         self.loss = DiceCELoss(to_onehot_y=True, softmax=True)
