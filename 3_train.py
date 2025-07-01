@@ -84,7 +84,7 @@ class LiverTrainer(Trainer):
         else:
             return np.array([0.0, 0])
 
-     def run(self):
+    def run(self):
         print("Comenzando entrenamiento...\n")
         for epoch in range(self.max_epochs):
             self.model.train()
