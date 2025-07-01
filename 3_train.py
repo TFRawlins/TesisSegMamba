@@ -8,7 +8,7 @@ from monai.data import decollate_batch
 from monai.metrics import DiceMetric
 from light_training.trainer import Trainer
 from model_segmamba.segmamba import SegMamba
-from datautils.build import get_train_val_test_loader_from_train
+from light_training.dataloading.dataset import get_train_val_test_loader_from_train
 from light_training.evaluation.metric import dice
 from utils.schedulers import LinearWarmupCosineAnnealingLR
 
