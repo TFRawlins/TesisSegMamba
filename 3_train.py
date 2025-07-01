@@ -80,7 +80,9 @@ class LiverTrainer(Trainer):
             loss = self.loss(logits, label)
             print(f"✅ Loss computed: {loss.item():.4f}")
     
-        self.scaler.scale(loss).backward()         # backward
+        print("⬅️  Haciendo backward...")
+        self.scaler.scale(loss).backward()
+        print("✅ backward() hecho")        # backward
         self.scaler.step(self.optimizer)           # optimizer step
         self.scaler.update()                       # update scaler
         self.optimizer.zero_grad()
@@ -149,6 +151,7 @@ class LiverTrainer(Trainer):
                     self.best_metric_epoch = epoch + 1
                     torch.save(self.model.state_dict(), os.path.join(self.save_dir, "best_model.pt"))
                     print(f"✅ Nuevo mejor modelo guardado (Epoch {self.best_metric_epoch})")
+            print(f"💾 Epoch {epoch + 1} completado, avg loss: {avg_loss:.4f}")
 
         print(f"\n🏁 Entrenamiento finalizado. Mejor Dice: {self.best_metric:.4f} en epoch {self.best_metric_epoch}")
 
