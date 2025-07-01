@@ -132,7 +132,7 @@ class GSC(nn.Module):
         return x + x_residual
 
 class MambaEncoder(nn.Module):
-    def __init__(self, in_chans=1, depths=[2, 2, 2, 2], dims=[16, 32, 64, 128],
+    def __init__(self, in_chans=1, depths=[2, 2, 2, 2], dims=[24, 48, 96, 192],
                  drop_path_rate=0., layer_scale_init_value=1e-6, out_indices=[0, 1, 2, 3]):
         super().__init__()
 
