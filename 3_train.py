@@ -46,7 +46,7 @@ class LiverTrainer(Trainer):
             roi_size=[64, 64, 64],
             sw_batch_size=1, 
         )
-
+        self.scaler = torch.cuda.amp.GradScaler()
         self.best_metric = 0
         self.best_metric_epoch = -1
 
