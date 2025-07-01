@@ -31,7 +31,7 @@ class LiverTrainer(Trainer):
         self.model = SegMamba(
             in_chans=1,
             out_chans=2,
-            depths=[1, 1, 2, 2],
+            depths=[2, 2, 2, 2],
             feat_size=[16, 32, 64, 128]
         )
         self.model.to(self.device)
