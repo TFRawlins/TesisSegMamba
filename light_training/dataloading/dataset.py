@@ -10,7 +10,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from sklearn.model_selection import KFold  ## K折交叉验证
-from monai.transforms import Resize
+from monai.transforms import (
+    Compose, RandFlip, RandAffined, RandGaussianNoise, RandScaleIntensity,
+    ToTensor, NormalizeIntensity
+)
 import pickle
 import os
 import json
@@ -28,10 +31,16 @@ import random
 class MedicalDataset(Dataset):
     def __init__(self, datalist, test=False) -> None:
         super().__init__()
-        
+        self.train_transforms = Compose([
+            RandFlip(prob=0.5, spatial_axis=0),
+            RandAffined(prob=0.3, rotate_range=(0.1, 0.1, 0.1), scale_range=(0.1, 0.1, 0.1)),
+            RandGaussianNoise(prob=0.2),
+            RandScaleIntensity(factors=0.1, prob=0.3),
+            NormalizeIntensity(nonzero=True, channel_wise=True),
+            ToTensor()
+        ])
         self.datalist = datalist
         self.test = test 
-
         self.data_cached = []
         for p in tqdm(self.datalist, total=len(self.datalist)):
             info = self.load_pkl(p)
@@ -87,21 +96,27 @@ class MedicalDataset(Dataset):
         image, seg = self.read_data(self.datalist[i])
         properties = self.data_cached[i]
     
-        image = self.resize(image, is_seg=False).float()  # [1, D, H, W]
+        image = self.resize(image, is_seg=False).float()
         if seg is not None:
-            seg = self.resize(seg, is_seg=True).long()     # [1, D, H, W]
+            seg = self.resize(seg, is_seg=True).long()
+            
+            # Data augmentation solo en entrenamiento
+            if not self.test:
+                seed = np.random.randint(0, 1e5)
+                image = self.train_transforms(image, random_seed=seed)
+                seg = self.train_transforms(seg, random_seed=seed)
+            
             return {
                 "data": image,
                 "seg": seg,
-                "properties": str(properties)
+                "properties": properties
             }
         else:
             return {
                 "data": image,
-                "properties": str(properties)
+                "properties": properties
             }
-    def __len__(self):
-        return len(self.datalist)
+
 
 def get_train_test_loader_from_test_list(data_dir, test_list):
     all_paths = glob.glob(f"{data_dir}/*.npz")
