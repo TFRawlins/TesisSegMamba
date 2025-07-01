@@ -67,7 +67,7 @@ class LiverTrainer(Trainer):
     import gc
 
     def train_step(self, batch):
-
+        self.optimizer.zero_grad()
         data = batch["data"].to(self.device, non_blocking=True)
         label = batch["seg"].to(self.device, non_blocking=True)
         label = (label > 0).long()  # asegúrate de tener clases válidas (0,1)
@@ -123,9 +123,7 @@ class LiverTrainer(Trainer):
             losses = []
 
             for batch in self.train_loader:
-                self.optimizer.zero_grad()
                 loss = self.train_step(batch)
-                loss.backward()
                 self.optimizer.step()
                 self.scheduler.step()
                 losses.append(loss.item())
