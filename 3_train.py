@@ -14,13 +14,13 @@ from light_training.evaluation.metric import dice
 from light_training.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 
 class LiverTrainer(Trainer):
-    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=300, batch_size=1):
+    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=200, batch_size=1):
         super().__init__(
             env_type="pytorch",
-            max_epochs=max_epochs,
+            max_epochs=200,
             batch_size=batch_size,
             device="cuda:0",
-            val_every=1,
+            val_every=5,
             num_gpus=1,
             logdir=save_dir
         )
@@ -31,8 +31,8 @@ class LiverTrainer(Trainer):
         self.model = SegMamba(
             in_chans=1,
             out_chans=2,
-            depths=[2, 2, 2, 2],
-            feat_size=[24, 48, 96, 192]
+            depths=[1, 1, 2, 2],
+            feat_size=[16, 32, 64, 128]
         )
         self.model.to(self.device)
         self.loss = DiceCELoss(to_onehot_y=True, softmax=True)
