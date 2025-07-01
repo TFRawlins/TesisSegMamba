@@ -84,6 +84,44 @@ class LiverTrainer(Trainer):
         else:
             return np.array([0.0, 0])
 
+     def run(self):
+        print("Comenzando entrenamiento...\n")
+        for epoch in range(self.max_epochs):
+            self.model.train()
+            losses = []
+
+            for batch in self.train_loader:
+                self.optimizer.zero_grad()
+                loss = self.train_step(batch)
+                loss.backward()
+                self.optimizer.step()
+                self.scheduler.step()
+                losses.append(loss.item())
+
+            avg_loss = np.mean(losses)
+            print(f"📚 Epoch {epoch + 1}/{self.max_epochs} - Loss: {avg_loss:.4f}")
+
+            # Validación
+            if (epoch + 1) % self.val_every == 0:
+                self.model.eval()
+                dices = []
+
+                for batch in self.val_loader:
+                    dice_val = self.validation_step(batch)
+                    dices.append(dice_val)
+
+                avg_dice = np.mean(dices)
+                print(f"🎯 Validation Dice: {avg_dice:.4f}")
+
+                # Guardar el mejor modelo
+                if avg_dice > self.best_metric:
+                    self.best_metric = avg_dice
+                    self.best_metric_epoch = epoch + 1
+                    torch.save(self.model.state_dict(), os.path.join(self.save_dir, "best_model.pt"))
+                    print(f"✅ Nuevo mejor modelo guardado (Epoch {self.best_metric_epoch})")
+
+        print(f"\n🏁 Entrenamiento finalizado. Mejor Dice: {self.best_metric:.4f} en epoch {self.best_metric_epoch}")
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=True, help="Ruta a datos preprocesados")
