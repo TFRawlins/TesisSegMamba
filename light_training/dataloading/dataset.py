@@ -77,20 +77,24 @@ class MedicalDataset(Dataset):
         return image_data, seg_data
 
     def __getitem__(self, i):
-        
-        image, seg = self.read_data(self.datalist[i])
-
+        image, image_data_global, seg, seg_global = self.read_data(self.datalist[i])
         properties = self.data_cached[i]
 
-        if seg is None:
+        image = torch.tensor(image).unsqueeze(0)  # [C, D, H, W]
+        image = self.resize(image)
+
+        if seg is not None:
+            seg = torch.tensor(seg).unsqueeze(0)
+            seg = self.resize(seg)
+
             return {
-                "data": image,
+                "image": image,
+                "label": seg,
                 "properties": properties
             }
-        else :
+        else:
             return {
-                "data": image,
-                "seg": seg,
+                "image": image,
                 "properties": properties
             }
 
