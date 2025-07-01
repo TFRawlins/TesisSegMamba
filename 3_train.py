@@ -6,10 +6,10 @@ from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.data import decollate_batch
 from monai.metrics import DiceMetric
-from light_training.trainers.default import Trainer
+from light_training.trainer import Trainer
 from model_segmamba.segmamba import SegMamba
 from datautils.build import get_train_val_test_loader_from_train
-from utils.utils import dice
+from light_training.evaluation.metric import dice
 from utils.schedulers import LinearWarmupCosineAnnealingLR
 
 class LiverTrainer(Trainer):
