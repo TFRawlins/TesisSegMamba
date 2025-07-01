@@ -70,8 +70,8 @@ class LiverTrainer(Trainer):
         self.optimizer.zero_grad()
         data = batch["data"].to(self.device, non_blocking=True)
         label = batch["seg"].to(self.device, non_blocking=True)
-        label = (label > 0).long()  # asegúrate de tener clases válidas (0,1)
-        with torch.cuda.amp.autocast():  # 🔁 Mixed precision
+        label = (label > 0).long()
+        with torch.amp.autocast(device_type="cuda"):
             logits = self.model(data)
             loss = self.loss(logits, label)
             print(f"✅ Loss computed: {loss.item():.4f}")
