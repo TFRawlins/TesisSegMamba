@@ -14,7 +14,7 @@ from light_training.evaluation.metric import dice
 from light_training.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 
 class LiverTrainer(Trainer):
-    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=400, batch_size=2):
+    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=300, batch_size=1):
         super().__init__(
             env_type="pytorch",
             max_epochs=max_epochs,
@@ -43,7 +43,7 @@ class LiverTrainer(Trainer):
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-5)
         self.scheduler = LinearWarmupCosineAnnealingLR(self.optimizer, warmup_epochs=20, max_epochs=self.max_epochs)
         self.inferer = SlidingWindowInferer(
-            roi_size=[192, 192, 192],
+            roi_size=[128, 128, 128],
             sw_batch_size=1, 
         )
 
@@ -64,21 +64,37 @@ class LiverTrainer(Trainer):
         self.val_loader = DataLoader(val_ds, batch_size=1)
         self.test_loader = DataLoader(test_ds, batch_size=1)
     
+    import gc
+
     def train_step(self, batch):
-        data, label = batch["data"].to(self.device), batch["seg"].to(self.device)
+        data = batch["data"].as_tensor().to(self.device, non_blocking=True)
+        label = batch["seg"].as_tensor().to(self.device, non_blocking=True)
         label = label[:, 0].long()
+    
         logits = self.model(data)
         loss = self.loss(logits, label)
+    
+        # 🔁 Limpieza explícita
+        torch.cuda.empty_cache()
+        gc.collect()
+    
         return loss
 
     def validation_step(self, batch):
-        data, label = batch["data"].to(self.device), batch["seg"].to(self.device)
+        data = batch["data"].as_tensor().to(self.device, non_blocking=True)
+        label = batch["seg"].as_tensor().to(self.device, non_blocking=True)
         label = label[:, 0].long()
+    
         with torch.no_grad():
             logits = self.inferer(data, self.model)
             preds = torch.argmax(logits, dim=1)
             dice_value = dice(preds.cpu().numpy(), label.cpu().numpy())
-            return dice_value
+    
+        # 🔁 Limpieza explícita
+        torch.cuda.empty_cache()
+        gc.collect()
+    
+        return dice_value
 
     def cal_metric(self, gt, pred):
         if pred.sum() > 0 and gt.sum() > 0:
