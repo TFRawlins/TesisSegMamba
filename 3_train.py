@@ -73,8 +73,9 @@ class LiverTrainer(Trainer):
         # 🔁 Asegura que tenga shape [B, 1, D, H, W] para one-hot
         if label.dim() == 4:
             label = label.unsqueeze(1)
-    
+        
         label = label.long()
+        label = (label > 0).long()
         logits = self.model(data)
         loss = self.loss(logits, label)
         return loss
@@ -83,12 +84,12 @@ class LiverTrainer(Trainer):
     def validation_step(self, batch):
         data = batch["data"].to(self.device, non_blocking=True)
         label = batch["seg"].to(self.device, non_blocking=True)
-    
+        
         if label.dim() == 4:
             label = label.unsqueeze(1)
     
         label = label.long()
-    
+        label = (label > 0).long()
         with torch.no_grad():
             logits = self.inferer(data, self.model)
             preds = torch.argmax(logits, dim=1)
