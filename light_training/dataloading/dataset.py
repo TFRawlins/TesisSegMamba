@@ -66,9 +66,10 @@ class MedicalDataset(Dataset):
     def post(self, batch_data):
         return batch_data
 
-    def resize(self, tensor, spatial_size=(192, 192, 192)):
-        resize_op = Resize(spatial_size=spatial_size, mode="trilinear" if tensor.dtype == torch.float32 else "nearest")
-        return resize_op(tensor)
+    def resize(self, np_array, is_seg=False, spatial_size=(192, 192, 192)):
+        array_torch = torch.tensor(np_array).unsqueeze(0) if np_array.ndim == 3 else torch.tensor(np_array)
+        resize_op = Resize(spatial_size=spatial_size, mode="nearest" if is_seg else "trilinear")
+        return resize_op(array_torch)
 
     
     def read_data(self, data_path):
@@ -86,13 +87,9 @@ class MedicalDataset(Dataset):
         image, seg = self.read_data(self.datalist[i])
         properties = self.data_cached[i]
     
-        image = torch.tensor(image, dtype=torch.float32).unsqueeze(0)  # [C=1, D, H, W]
-        image = self.resize(image)
-    
+        image = self.resize(image, is_seg=False).float()  # [1, D, H, W]
         if seg is not None:
-            seg = torch.tensor(seg, dtype=torch.uint8).unsqueeze(0)
-            seg = self.resize(seg)
-    
+            seg = self.resize(seg, is_seg=True).long()     # [1, D, H, W]
             return {
                 "data": image,
                 "seg": seg,
@@ -103,7 +100,6 @@ class MedicalDataset(Dataset):
                 "data": image,
                 "properties": properties
             }
-
     def __len__(self):
         return len(self.datalist)
 
