@@ -63,6 +63,9 @@ class MedicalDataset(Dataset):
 
         print(f"data length is {len(self.datalist)}")
         
+    def __len__(self):
+        return len(self.datalist)
+        
     def load_pkl(self, data_path):
         pass 
         properties_path = f"{data_path[:-4]}.pkl"
