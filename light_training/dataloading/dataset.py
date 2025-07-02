@@ -31,14 +31,14 @@ import random
 class MedicalDataset(Dataset):
     def __init__(self, datalist, test=False) -> None:
         super().__init__()
-        self.train_transforms = Compose([
+        """self.train_transforms = Compose([
             RandFlip(prob=0.5, spatial_axis=0),
             RandAffined(keys=["image", "label"], prob=0.3, rotate_range=(0.1, 0.1, 0.1), scale_range=(0.1, 0.1, 0.1)),
             RandGaussianNoise(prob=0.2),
             RandScaleIntensity(factors=0.1, prob=0.3),
             NormalizeIntensity(nonzero=True, channel_wise=True),
             ToTensor()
-        ])
+        ])"""
         self.datalist = datalist
         self.test = test 
         self.data_cached = []
