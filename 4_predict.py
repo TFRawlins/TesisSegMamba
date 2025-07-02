@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 from monai.inferers import SlidingWindowInferer
 from light_training.dataloading.dataset import get_train_val_test_loader_from_train
-from model.model_seg import SegMamba  # ⬅️ AJUSTA ESTO si tu modelo se llama diferente o está en otro archivo
+from model_segmamba.segmamba import SegMamba
 
 def main():
     # ==== Configuración general ====
