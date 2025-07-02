@@ -101,10 +101,10 @@ class MedicalDataset(Dataset):
             seg = self.resize(seg, is_seg=True).long()
             
             # Data augmentation solo en entrenamiento
-            if not self.test:
-                seed = np.random.randint(0, 1e5)
-                image = self.train_transforms(image, random_seed=seed)
-                seg = self.train_transforms(seg, random_seed=seed)
+            #if not self.test:
+                #seed = np.random.randint(0, 1e5)
+                #image = self.train_transforms(image, random_seed=seed)
+                #seg = self.train_transforms(seg, random_seed=seed)
             
             return {
                 "data": image,
