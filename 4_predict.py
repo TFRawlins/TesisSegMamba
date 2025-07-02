@@ -9,7 +9,7 @@ from model_segmamba.segmamba import SegMamba
 def main():
     # ==== Configuración general ====
     model_path = "./ckpts_seg/best_model.pt"
-    data_dir = "/workspace/data/content/data"
+    data_dir = "/workspace/data/content/data/fullres/train/"
     save_path = "./prediction_results/segmamba"
     os.makedirs(save_path, exist_ok=True)
 
