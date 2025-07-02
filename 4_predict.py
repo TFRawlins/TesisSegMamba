@@ -1,58 +1,52 @@
 import os
 import torch
 import numpy as np
+from tqdm import tqdm
 from monai.inferers import SlidingWindowInferer
-from light_training.prediction import Predictor
 from light_training.dataloading.dataset import get_train_val_test_loader_from_train
-from monai.utils import set_determinism
+from model.model_seg import SegMamba  # ⬅️ AJUSTA ESTO si tu modelo se llama diferente o está en otro archivo
 
-set_determinism(123)
+def main():
+    # ==== Configuración general ====
+    model_path = "./ckpts_seg/best_model.pt"
+    data_dir = "./data/fullres/train"
+    save_path = "./prediction_results/segmamba"
+    os.makedirs(save_path, exist_ok=True)
 
-data_dir = "/workspace/data/content/data/fullres/train"
-patch_size = [64, 64, 64]
-save_path = "./prediction_results/segmamba_liver"
-model_path = "./ckpts_seg/best_model.pt"
-device = "cuda:0"
+    # ==== Crear el modelo y cargar pesos entrenados ====
+    model = SegMamba(
+        depths=[2, 2, 2, 2],
+        dims=[24, 48, 96, 192]
+    )
+    model.load_state_dict(torch.load(model_path, map_location="cuda"))
+    model.eval().cuda()
 
-os.makedirs(save_path, exist_ok=True)
+    # ==== Cargar datos de test ====
+    _, _, test_dataset = get_train_val_test_loader_from_train(
+        data_dir=data_dir,
+        train_rate=0.7,
+        val_rate=0.1,
+        test_rate=0.2,
+        seed=42
+    )
 
-# 1. Cargar modelo
-from model_segmamba.segmamba import SegMamba
+    # ==== Configurar inferencia ====
+    inferer = SlidingWindowInferer(roi_size=(96, 96, 96), sw_batch_size=1, overlap=0.5)
 
-model = SegMamba(
-    in_chans=1,
-    out_chans=2,
-    depths=[2, 2, 2, 2],
-    feat_size=[24, 48, 96, 192]
-)
-model.load_state_dict(torch.load(model_path, map_location=device))
-model.eval()
-model.to(device)
-
-# 2. Inferencia sliding window
-inferer = SlidingWindowInferer(
-    roi_size=patch_size,
-    sw_batch_size=1,
-    overlap=0.5,
-    progress=True,
-    mode="gaussian"
-)
-
-predictor = Predictor(window_infer=inferer, mirror_axes=[0,1,2])
-
-# 3. Obtener dataset test
-_, _, test_ds = get_train_val_test_loader_from_train(data_dir)
-
-# 4. Inferencia por muestra
-for batch in test_ds:
-    data = batch["data"].unsqueeze(0).to(device)
-    properties = batch["properties"]
-
+    # ==== Ejecutar inferencia ====
     with torch.no_grad():
-        pred = predictor.maybe_mirror_and_predict(data, model, device=device)
-        pred = predictor.predict_raw_probability(pred, properties)
-        pred = torch.argmax(pred, dim=0).unsqueeze(0)  # (1, D, H, W)
-        pred = predictor.predict_noncrop_probability(pred, properties)
-        predictor.save_to_nii(pred, raw_spacing=[1,1,1], case_name=properties["name"][0], save_dir=save_path)
+        for i in tqdm(range(len(test_dataset))):
+            batch = test_dataset[i]
+            image = batch["data"].unsqueeze(0).cuda()  # (1, C, D, H, W)
+            props = batch["properties"]
+            pred = inferer(inputs=image, network=model)
+            pred = torch.argmax(pred, dim=1).cpu().numpy()[0]  # (D, H, W)
 
-print("✅ Inferencia completada. Resultados guardados en:", save_path)
+            case_name = props.get("name", f"case_{i}")
+            save_file = os.path.join(save_path, f"{case_name}_pred.npy")
+            np.save(save_file, pred)
+
+    print(f"\n✅ Inferencia completada. Resultados guardados en {save_path}")
+
+if __name__ == "__main__":
+    main()
