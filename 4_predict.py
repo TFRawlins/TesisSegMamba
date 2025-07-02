@@ -15,8 +15,7 @@ def main():
 
     # ==== Crear el modelo y cargar pesos entrenados ====
     model = SegMamba(
-        depths=[2, 2, 2, 2],
-        dims=[24, 48, 96, 192]
+        depths=[2, 2, 2, 2]
     )
     model.load_state_dict(torch.load(model_path, map_location="cuda"))
     model.eval().cuda()
