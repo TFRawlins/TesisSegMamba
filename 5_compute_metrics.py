@@ -5,6 +5,7 @@ import pickle
 from medpy import metric
 from tqdm import tqdm
 import csv
+from monai.transforms import Resize
 
 def cal_metric(gt, pred, voxel_spacing):
     if pred.sum() > 0 and gt.sum() > 0:
@@ -12,12 +13,15 @@ def cal_metric(gt, pred, voxel_spacing):
         hd95 = metric.binary.hd95(pred, gt, voxelspacing=voxel_spacing)
         return np.array([dice, hd95])
     else:
-        return np.array([0.0, 50.0])  # penalización
+        return np.array([0.0, 50.0])
 
 def load_pkl(pkl_path):
     with open(pkl_path, "rb") as f:
         info = pickle.load(f)
     return info
+
+resize_to = (192, 192, 192)
+resizer = Resize(spatial_size=resize_to, mode="nearest")
 
 if __name__ == "__main__":
     pred_dir = "./prediction_results/segmamba"
@@ -39,35 +43,38 @@ if __name__ == "__main__":
         pkl_path = os.path.join(data_dir, f"{case_id}.pkl")
 
         if not os.path.exists(seg_path) or not os.path.exists(pkl_path):
-            print(f"⚠️  Archivos faltantes para {case_id}, se omite.")
+            print(f"⚠️ Archivos faltantes para {case_id}, se omite.")
             continue
 
         pred = np.load(pred_path)
         gt = np.load(seg_path)
 
-        # Corregir dimensiones si tienen canal extra
+        # Eliminar canal si es necesario
         if pred.ndim == 4:
             pred = pred[0]
         if gt.ndim == 4:
             gt = gt[0]
 
-        if pred.shape != gt.shape:
-            print(f"❌ Shape mismatch for {case_id}: pred {pred.shape}, gt {gt.shape}")
-            continue
+        # Forzar redimensionamiento
+        pred_torch = torch.tensor(pred).unsqueeze(0)
+        gt_torch = torch.tensor(gt).unsqueeze(0)
+
+        pred_resized = resizer(pred_torch).squeeze().numpy()
+        gt_resized = resizer(gt_torch).squeeze().numpy()
 
         info = load_pkl(pkl_path)
         voxel_spacing = info.get("spacing", [1, 1, 1])
-        m = cal_metric(gt.astype(np.bool_), pred.astype(np.bool_), voxel_spacing)
+        m = cal_metric(gt_resized.astype(bool), pred_resized.astype(bool), voxel_spacing)
         result_list.append(m)
 
     if not result_list:
-        print("❌ No se calcularon métricas. Verifica las predicciones y las máscaras.")
+        print("❌ No se calcularon métricas.")
         exit()
 
     result_array = np.stack(result_list, axis=0)
     np.save(os.path.join(metrics_dir, "segmamba_liver.npy"), result_array)
 
-    # Exportar a CSV
+    # CSV
     csv_path = os.path.join(metrics_dir, "segmamba_liver.csv")
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -75,7 +82,7 @@ if __name__ == "__main__":
         for cid, metrics in zip(case_ids, result_array):
             writer.writerow([cid, metrics[0], metrics[1]])
 
-    # Mostrar resumen
+    # Resumen
     print("✅ Métricas calculadas")
     print("Total casos:", len(result_array))
     print("Dice promedio:", result_array[:, 0].mean())
