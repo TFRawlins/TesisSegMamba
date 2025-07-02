@@ -22,10 +22,10 @@ from model_segmamba.segmamba import SegMamba
 model = SegMamba(
     in_chans=1,
     out_chans=2,
-    depths=[1, 1, 2, 2],
-    feat_size=[16, 32, 64, 128]
+    depths=[2, 2, 2, 2],
+    feat_size=[24, 48, 96, 192]
 )
-model.load_state_dict(torch.load(model_path, map_location="cpu"))
+model.load_state_dict(torch.load(model_path, map_location=device))
 model.eval()
 model.to(device)
 
