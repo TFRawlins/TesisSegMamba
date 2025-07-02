@@ -1,25 +1,9 @@
-from light_training.dataloading.dataset import get_train_val_test_loader_from_train
-from monai.utils import set_determinism
-import torch 
 import os
 import numpy as np
-import SimpleITK as sitk
+import torch
+import pickle
 from medpy import metric
-import argparse
-from tqdm import tqdm 
-
-import numpy as np
-
-set_determinism(123)
-
-parser = argparse.ArgumentParser()
-
-parser.add_argument("--pred_name", required=True, type=str)
-
-results_root = "prediction_results"
-args = parser.parse_args()
-
-pred_name = args.pred_name
+from tqdm import tqdm
 
 def cal_metric(gt, pred, voxel_spacing):
     if pred.sum() > 0 and gt.sum() > 0:
@@ -27,58 +11,41 @@ def cal_metric(gt, pred, voxel_spacing):
         hd95 = metric.binary.hd95(pred, gt, voxelspacing=voxel_spacing)
         return np.array([dice, hd95])
     else:
-        return np.array([0.0, 50])
+        return np.array([0.0, 50.0])  # penalización
 
-def each_cases_metric(gt, pred, voxel_spacing):
-    classes_num = 3
-    class_wise_metric = np.zeros((classes_num, 2))
-    for cls in range(0, classes_num):
-        class_wise_metric[cls, ...] = cal_metric(pred[cls], gt[cls], voxel_spacing)
-    print(class_wise_metric)
-    return class_wise_metric
-
-def convert_labels(labels):
-    ## TC, WT and ET
-    labels = labels.unsqueeze(dim=0)
-
-    result = [(labels == 1) | (labels == 3), (labels == 1) | (labels == 3) | (labels == 2), labels == 3]
-    
-    return torch.cat(result, dim=0).float()
-
+def load_pkl(pkl_path):
+    with open(pkl_path, "rb") as f:
+        info = pickle.load(f)
+    return info
 
 if __name__ == "__main__":
-    data_dir = "./data/fullres/train"
-    raw_data_dir = "./data/raw_data/BraTS2023/ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData/"
-    train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
-    print(len(test_ds))
-    all_results = np.zeros((250,3,2))
+    pred_dir = "./prediction_results/segmamba"
+    data_dir = "/workspace/data/content/data/fullres/train"
 
-    ind = 0
-    for batch in tqdm(test_ds, total=len(test_ds)):
-        properties = batch["properties"]
-        case_name = properties["name"]
-        gt_itk = os.path.join(raw_data_dir, case_name, f"seg.nii.gz")
-        voxel_spacing = [1, 1, 1]
-        gt_itk = sitk.ReadImage(gt_itk)
-        gt_array = sitk.GetArrayFromImage(gt_itk).astype(np.int32)
-        gt_array = torch.from_numpy(gt_array)
-        gt_array = convert_labels(gt_array).numpy()
-        pred_itk = sitk.ReadImage(f"./{results_root}/{pred_name}/{case_name}.nii.gz")
-        pred_array = sitk.GetArrayFromImage(pred_itk)
+    result_list = []
 
-        m = each_cases_metric(gt_array, pred_array, voxel_spacing)
+    pred_files = sorted([f for f in os.listdir(pred_dir) if f.endswith("_pred.npy")])
 
-        all_results[ind, ...] = m
-    
-        ind += 1
+    for fname in tqdm(pred_files):
+        case_id = fname.replace("_pred.npy", "")
 
-    os.makedirs(f"./{results_root}/result_metrics/", exist_ok=True)
-    np.save(f"./{results_root}/result_metrics/{pred_name}.npy", all_results) 
-    
-    result = np.load(f"./{results_root}/result_metrics/{pred_name}.npy")
-    print(result.shape)
-    print(result.mean(axis=0))
-    print(result.std(axis=0))
+        pred_path = os.path.join(pred_dir, fname)
+        seg_path = os.path.join(data_dir, f"{case_id}_seg.npy")
+        pkl_path = os.path.join(data_dir, f"{case_id}.pkl")
 
+        pred = np.load(pred_path)
+        gt = np.load(seg_path)
+        info = load_pkl(pkl_path)
 
+        voxel_spacing = info.get("spacing", [1, 1, 1])  # fallback si no existe
+        m = cal_metric(gt.astype(np.bool_), pred.astype(np.bool_), voxel_spacing)
+        result_list.append(m)
 
+    result_array = np.stack(result_list, axis=0)
+    os.makedirs("./prediction_results/result_metrics", exist_ok=True)
+    np.save("./prediction_results/result_metrics/segmamba_liver.npy", result_array)
+
+    print("✅ Métricas calculadas")
+    print("Shape:", result_array.shape)
+    print("Dice promedio:", result_array[:, 0].mean())
+    print("HD95 promedio:", result_array[:, 1].mean())
