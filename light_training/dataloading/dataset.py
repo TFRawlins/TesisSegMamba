@@ -11,7 +11,7 @@
 from sklearn.model_selection import KFold  ## K折交叉验证
 from monai.transforms import (
     Compose, RandFlip, RandAffined, RandGaussianNoise, RandScaleIntensity,
-    ToTensor, NormalizeIntensity
+    ToTensor, NormalizeIntensity, Resize
 )
 import pickle
 import os
