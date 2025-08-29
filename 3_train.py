@@ -43,7 +43,7 @@ class LiverTrainer(Trainer):
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-5)
         self.scheduler = LinearWarmupCosineAnnealingLR(self.optimizer, warmup_epochs=20, max_epochs=self.max_epochs)
         self.inferer = SlidingWindowInferer(
-            roi_size=[128, 128, 128],
+            roi_size=[112, 112, 112],
             sw_batch_size=2, 
         )
         self.scaler = torch.cuda.amp.GradScaler()
