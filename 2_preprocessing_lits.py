@@ -14,11 +14,7 @@ def process_train():
     out_spacing = [1.0, 0.76757812, 0.76757812]
     output_dir = "/home/trawlins/tesis/data/fullres/train/"
 
-    with open("/home/trawlins/tesis/TesisSegMamba/data_analysis_result.txt", "r") as f:
-        content = f.read().strip("\n")
-        print(content)
-    content = eval(content)
-    foreground_intensity_properties_per_channel = content["intensity_statistics_per_channel"]
+    foreground_intensity_properties_per_channel = None
     
     preprocessor.run(output_spacing=out_spacing, 
                      output_dir=output_dir, 
