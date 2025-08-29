@@ -7,7 +7,7 @@ import json
 def process_train():
     # fullres spacing is [0.5        0.70410156 0.70410156]
     # median_shape is [602.5 516.5 516.5]
-    base_dir = "/home/trawlins/tesis/raw_lits_flat"
+    base_dir = "/home/trawlins/tesis/raw_lits/LITS"
 
     preprocessor = DefaultPreprocessor(base_dir=base_dir)
 
