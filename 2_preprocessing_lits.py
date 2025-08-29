@@ -1,7 +1,7 @@
 from light_training.preprocessing.preprocessors.default_preprocessor_liver_2017 import DefaultPreprocessor 
 import numpy as np 
 import pickle 
-import json 
+import os, json
 
 
 def process_train():
