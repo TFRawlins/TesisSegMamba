@@ -27,8 +27,8 @@ def process_train():
     preprocessor.run(
         output_spacing=out_spacing,
         output_dir=output_dir,
-        all_labels=[1, 2],                 # LiTS: 1=hígado, 2=tumor
-        num_processes=16,                  # tienes RAM suficiente
+        all_labels=[1, 2],                 
+        num_processes=16,                  
         foreground_intensity_properties_per_channel=fprops
     )
 
