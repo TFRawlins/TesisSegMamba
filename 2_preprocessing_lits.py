@@ -7,14 +7,14 @@ import json
 def process_train():
     # fullres spacing is [0.5        0.70410156 0.70410156]
     # median_shape is [602.5 516.5 516.5]
-    base_dir = "/home/xingzhaohu/data/Liver_2017"
+    base_dir = "/home/trawlins/tesis/raw_lits"
 
     preprocessor = DefaultPreprocessor(base_dir=base_dir)
 
     out_spacing = [1.0, 0.76757812, 0.76757812]
-    output_dir = "./data/fullres/train/"
+    output_dir = "/home/trawlins/tesis/data/fullres/train/"
 
-    with open("./data_analysis_result.txt", "r") as f:
+    with open("/home/trawlins/tesis/TesisSegMamba/data_analysis_result.txt", "r") as f:
         content = f.read().strip("\n")
         print(content)
     content = eval(content)
@@ -29,7 +29,7 @@ def process_train():
 def process_val():
     # fullres spacing is [0.5        0.70410156 0.70410156]
     # median_shape is [602.5 516.5 516.5]
-    base_dir = "./data/raw_data/Val"
+    base_dir = "/home/trawlins/tesis/raw_lits"
     image_dir = "img"
     preprocessor = DefaultPreprocessor(base_dir=base_dir, 
                                     image_dir=image_dir,
@@ -38,7 +38,7 @@ def process_val():
 
     out_spacing = [0.5, 0.70410156, 0.70410156]
 
-    with open("./data_analysis_result.txt", "r") as f:
+    with open("/home/trawlins/tesis/TesisSegMamba/data_analysis_result.txt", "r") as f:
         content = f.read().strip("\n")
         print(content)
     content = eval(content)
