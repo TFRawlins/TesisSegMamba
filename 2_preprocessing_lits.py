@@ -19,7 +19,7 @@ def process_train():
     preprocessor.run(output_spacing=out_spacing, 
                      output_dir=output_dir, 
                      all_labels=[1, 2],
-                     num_processes=16,
+                     num_processes=32,
                      foreground_intensity_properties_per_channel=foreground_intensity_properties_per_channel)
 
 def process_val():
