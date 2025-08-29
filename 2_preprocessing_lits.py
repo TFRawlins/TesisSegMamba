@@ -5,22 +5,32 @@ import json
 
 
 def process_train():
-    # fullres spacing is [0.5        0.70410156 0.70410156]
-    # median_shape is [602.5 516.5 516.5]
+    # raíz con archivos juntos (volume-*.nii, segmentation-*.nii)
     base_dir = "/home/trawlins/tesis/raw_lits/LITS"
-
     preprocessor = DefaultPreprocessor(base_dir=base_dir)
 
     out_spacing = [1.0, 0.76757812, 0.76757812]
     output_dir = "/home/trawlins/tesis/data/fullres/train/"
+    os.makedirs(output_dir, exist_ok=True)
 
-    foreground_intensity_properties_per_channel = None
-    
-    preprocessor.run(output_spacing=out_spacing, 
-                     output_dir=output_dir, 
-                     all_labels=[1, 2],
-                     num_processes=32,
-                     foreground_intensity_properties_per_channel=foreground_intensity_properties_per_channel)
+    # el plan se guarda junto al repo (ruta absoluta para evitar dudas)
+    analysis_path = "/home/trawlins/tesis/TesisSegMamba/data_analysis_result.txt"
+    if not os.path.exists(analysis_path):
+        # calcula estadísticas y las guarda como JSON en data_analysis_result.txt
+        preprocessor.run_plan()
+
+    # lee JSON (no uses eval)
+    with open(analysis_path, "r") as f:
+        content = json.loads(f.read())
+    fprops = {str(k): v for k, v in content["intensity_statistics_per_channel"].items()}
+
+    preprocessor.run(
+        output_spacing=out_spacing,
+        output_dir=output_dir,
+        all_labels=[1, 2],                 # LiTS: 1=hígado, 2=tumor
+        num_processes=32,                  # tienes RAM suficiente
+        foreground_intensity_properties_per_channel=fprops
+    )
 
 def process_val():
     # fullres spacing is [0.5        0.70410156 0.70410156]
