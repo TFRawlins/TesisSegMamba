@@ -95,7 +95,8 @@ class LiverTrainer(Trainer):
         label = label.long()
         label = (label > 0).long()
         with torch.no_grad():
-            logits = self.inferer(data, self.model)
+            with torch.amp.autocast('cuda')           
+                logits = self.inferer(data, self.model)
             preds = torch.argmax(logits, dim=1)
             dice_value = dice(preds.cpu().numpy(), label.squeeze(1).cpu().numpy())
     
