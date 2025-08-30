@@ -129,7 +129,7 @@ class LiverTrainer(Trainer):
         return dice_value
 
     def run(self):
-        print("🚀 Comenzando entrenamiento...\n")
+        print(" Comenzando entrenamiento...\n")
         global_step = 0
         for epoch in range(self.max_epochs):
             self.model.train()
@@ -153,7 +153,7 @@ class LiverTrainer(Trainer):
                 self.model.eval()
                 dices = [self.validation_step(b) for b in self.val_loader]
                 avg_dice = float(np.mean(dices)) if dices else 0.0
-                print(f"🎯 Validation Dice: {avg_dice:.4f}")
+                print(f" Validation Dice: {avg_dice:.4f}")
 
                 # Guardar el mejor modelo
                 if avg_dice > self.best_metric:
@@ -174,7 +174,7 @@ def main():
     parser.add_argument("--data_dir", type=str, required=True, help="Ruta a datos preprocesados")
     parser.add_argument("--save_dir", type=str, default="/home/trawlins/tesis/ckpts_seg", help="Dónde guardar el modelo")
     parser.add_argument("--epochs", type=int, default=300, help="Número de epochs (por defecto 300)")
-    parser.add_argument("--batch_size", type=int, default=4, help="Batch size de entrenamiento")
+    parser.add_argument("--batch_size", type=int, default=2, help="Batch size de entrenamiento")
     parser.add_argument("--sw_batch_size", type=int, default=2, help="Sliding window batch size para validación")
     parser.add_argument("--test_run", action="store_true", help="Ejecuta un smoke test de 10 epochs")
     args = parser.parse_args()
