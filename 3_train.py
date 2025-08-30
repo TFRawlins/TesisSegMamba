@@ -26,7 +26,7 @@ def gpu_summary():
     return n
 
 class LiverTrainer(Trainer):
-    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=300, batch_size=2, sw_batch_size=2):
+    def __init__(self, data_dir, save_dir="./ckpts_seg", max_epochs=300, batch_size=2, sw_batch_size=1):
         n_gpus = gpu_summary()
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
