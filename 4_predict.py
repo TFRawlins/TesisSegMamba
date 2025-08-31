@@ -8,13 +8,15 @@ from model_segmamba.segmamba import SegMamba
 
 def main():
     # ==== Configuración general ====
-    model_path = "./ckpts_seg/best_model.pt"
-    data_dir = "/workspace/data/content/data/fullres/train/"
-    save_path = "./prediction_results/segmamba"
+    model_path = "/home/trawlins/tesis/ckpts_seg/best_model.pt"            
+    data_dir   = "/home/trawlins/tesis/data/fullres/train"                 
+    save_path  = "/home/trawlins/tesis/prediction_results/segmamba"        
     os.makedirs(save_path, exist_ok=True)
 
     # ==== Crear el modelo y cargar pesos entrenados ====
     model = SegMamba(
+        in_chans=1,                                                       
+        out_chans=2,                                                      
         depths=[2, 2, 2, 2],
         feat_size=[24, 48, 96, 192]
     )
@@ -31,7 +33,7 @@ def main():
     )
 
     # ==== Configurar inferencia ====
-    inferer = SlidingWindowInferer(roi_size=(96, 96, 96), sw_batch_size=1, overlap=0.5)
+    inferer = SlidingWindowInferer(roi_size=(128, 128, 128), sw_batch_size=1, overlap=0.5)
 
     # ==== Ejecutar inferencia ====
     with torch.no_grad():
