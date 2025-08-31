@@ -26,7 +26,7 @@ resizer = Resize(spatial_size=resize_to, mode="nearest")
 if __name__ == "__main__":
     pred_dir = "/home/trawlins/tesis/prediction_results/segmamba"
     data_dir = "/workspace/data/content/data/fullres/train"
-    metrics_dir = "./prediction_results/result_metrics"
+    metrics_dir = "/home/trawlins/tesis/prediction_results/result_metrics"
     os.makedirs(metrics_dir, exist_ok=True)
 
     result_list = []
