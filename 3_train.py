@@ -136,11 +136,12 @@ class LiverTrainer(Trainer):
             losses = []
 
             for batch in self.train_loader:
-                loss = self.train_step(batch)
-                losses.append(loss.item())
+                print(batch.shape)
+                #loss = self.train_step(batch)
+                #losses.append(loss.item())
                 # Si tu scheduler está diseñado por iteración, puedes steppear aquí:
                 # self.scheduler.step()
-                global_step += 1
+                #global_step += 1
 
             # Por-epoch step (recomendado para Cosine con warmup por epoch)
             self.scheduler.step()
