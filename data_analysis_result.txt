@@ -1,7 +1,1 @@
-Median image size: (512, 512, 128)
-Voxel spacing (median): (1.0, 1.0, 1.0)
-Modality: CT
-Organ: Liver
-Num samples: 131
-Min intensity: -100
-Max intensity: 400
+{"intensity_statistics_per_channel": {"0": {"mean": 99.91570281982422, "median": 101.0, "std": 36.56352996826172, "min": -889.0, "max": 2469.0, "percentile_99_5": 198.0, "percentile_00_5": -15.0}}, "fullres spacing": [0.767578125, 0.767578125, 1.0], "median_shape": [481.0, 512.0, 512.0], "initial_patch_size": [280, 280, 215], "target medium patch size": [224, 320, 320]}
