@@ -136,7 +136,7 @@ class LiverTrainer(Trainer):
             losses = []
 
             for batch in self.train_loader:
-                print(batch.shape)
+                print(batch)
                 loss = self.train_step(batch)
                 losses.append(loss.item())
 
