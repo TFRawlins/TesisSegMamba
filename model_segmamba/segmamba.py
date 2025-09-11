@@ -151,7 +151,8 @@ class MambaEncoder(nn.Module):
 
         self.stages = nn.ModuleList()
         self.gscs = nn.ModuleList()
-        num_slices_list = [64, 32, 16, 8]
+        #num_slices_list = [64, 32, 16, 8]
+        num_slices_list = [32, 16, 8, 4]
         cur = 0
         for i in range(4):
             gsc = GSC(dims[i])
