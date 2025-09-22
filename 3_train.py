@@ -11,6 +11,33 @@ from model_segmamba.segmamba import SegMamba
 from light_training.dataloading.dataset import get_train_val_test_loader_from_train
 from light_training.evaluation.metric import dice
 from light_training.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
+import os, sys, io
+from datetime import datetime
+
+# Carpeta y nombre del log (reinicia en cada run)
+os.makedirs("logs", exist_ok=True)
+log_path = os.path.join("logs", "train.log")
+
+class Tee(io.TextIOBase):
+    def __init__(self, *streams):
+        self.streams = streams
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+            s.flush()
+        return len(data)
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+# Abrir archivo en modo "w" para reiniciar en cada entrenamiento
+_log_f = open(log_path, "w", buffering=1, encoding="utf-8")
+
+# Duplicar stdout y stderr a archivo + consola
+sys.stdout = Tee(sys.stdout, _log_f)
+sys.stderr = Tee(sys.stderr, _log_f)
+
+print(f"📄 Logging en: {log_path}")
 
 torch.backends.cudnn.benchmark = True  # mejor rendimiento en 3D con input size estable
 
