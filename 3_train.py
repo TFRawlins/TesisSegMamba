@@ -95,9 +95,11 @@ class LiverTrainer(Trainer):
         )
 
         # ↑ subimos el sliding window batch para validar más rápido con 2 GPUs
+        ROI = (128, 128, 96)
         self.inferer = SlidingWindowInferer(
-            roi_size=[64, 64, 64],
+            roi_size=list(ROI),
             sw_batch_size=sw_batch_size,
+            overlap=0.25,
         )
         self.scaler = torch.cuda.amp.GradScaler()
         self.best_metric = 0.0
