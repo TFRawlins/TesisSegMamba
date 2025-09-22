@@ -106,6 +106,8 @@ class LiverTrainer(Trainer):
         self.best_metric_epoch = -1
 
         # Datos
+        print("+++++")
+        print(data_dir)
         train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
 
         def custom_collate_fn(batch):
