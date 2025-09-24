@@ -94,7 +94,7 @@ class LiverTrainer(Trainer):
         )
 
         # ↑ subimos el sliding window batch para validar más rápido con 2 GPUs
-        ROI = (128, 128, 80)
+        ROI = (128, 128, 64)
         self.inferer = SlidingWindowInferer(
             roi_size=list(ROI),
             sw_batch_size=sw_batch_size,
