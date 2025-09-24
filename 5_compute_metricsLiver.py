@@ -1,123 +1,145 @@
 import os
-import argparse
 import numpy as np
 import torch
 import pickle
 from medpy import metric
 from tqdm import tqdm
 import csv
+from monai.transforms import Resize
 
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--pred_dir",  type=str, default="/home/trawlins/tesis/prediction_results/segmamba")
-    p.add_argument("--data_dir",  type=str, default="/home/trawlins/tesis/data/fullres/train")
-    p.add_argument("--out_dir",   type=str, default="/home/trawlins/tesis/prediction_results/result_metrics")
-    return p.parse_args()
+# --- Configuración ---
+LIVER_ID = 1  # Ajusta si tu etiqueta de hígado es distinta
 
-def cal_metric(gt, pred, voxel_spacing):
-    if pred.sum() > 0 and gt.sum() > 0:
-        dsc = metric.binary.dc(pred, gt)
-        hd95 = metric.binary.hd95(pred, gt, voxelspacing=voxel_spacing)
-        return float(dsc), float(hd95)
+# --- Utilidades ---
+def cal_metric(gt_bin: np.ndarray, pred_bin: np.ndarray, voxel_spacing):
+    """
+    gt_bin, pred_bin: booleanos o {0,1} con misma forma (D,H,W)
+    voxel_spacing: (z, y, x)
+    """
+    if pred_bin.sum() > 0 and gt_bin.sum() > 0:
+        dice = metric.binary.dc(pred_bin, gt_bin)
+        hd95 = metric.binary.hd95(pred_bin, gt_bin, voxelspacing=voxel_spacing)
+        return np.array([dice, hd95], dtype=np.float32)
     else:
-        return 0.0, 50.0
+        # Caso degenerado: al menos una máscara vacía
+        return np.array([0.0, 50.0], dtype=np.float32)
 
 def load_pkl(pkl_path):
     with open(pkl_path, "rb") as f:
         info = pickle.load(f)
     return info
 
-def match_shape_to_gt(pred, gt_shape):
-    """Alinea pred al tamaño de GT con crop/pad centrado (sin interpolar)."""
-    pred = np.asarray(pred)
-    out = np.zeros(gt_shape, dtype=pred.dtype)
-    # recortes/padding centrados
-    def bounds(src, dst):
-        # devuelve (s0, s1) en src y (d0, d1) en dst
-        src_len, dst_len = src, dst
-        if src_len >= dst_len:
-            s0 = (src_len - dst_len) // 2
-            s1 = s0 + dst_len
-            d0, d1 = 0, dst_len
+def load_prediction_label(case_base_path: str) -> np.ndarray:
+    """
+    Intenta cargar primero *_probs.npy (C,D,H,W), si no existe usa *_pred.npy (D,H,W).
+    Devuelve etiquetas (D,H,W) en int (0..C-1) listas para filtrar por clase.
+    """
+    probs_path = case_base_path + "_probs.npy"
+    pred_path  = case_base_path + "_pred.npy"
+
+    if os.path.exists(probs_path):
+        pred = np.load(probs_path)  # (C,D,H,W) o (1,D,H,W) dependiendo del guardado
+        if pred.ndim == 4 and pred.shape[0] > 1:
+            # multicanal: tomar clase más probable
+            pred_lbl = np.argmax(pred, axis=0).astype(np.uint8)  # (D,H,W)
+        elif pred.ndim == 4 and pred.shape[0] == 1:
+            # canal único con probs -> umbral 0.5
+            pred_lbl = (pred[0] >= 0.5).astype(np.uint8)          # (D,H,W) binario
         else:
-            d0 = (dst_len - src_len) // 2
-            d1 = d0 + src_len
-            s0, s1 = 0, src_len
-        return (s0, s1), (d0, d1)
+            # ya viene (D,H,W)
+            pred_lbl = pred.astype(np.uint8)
+    else:
+        # Compatibilidad: solo etiquetas guardadas
+        pred = np.load(pred_path)  # (D,H,W)
+        # Si por error viniera (1,D,H,W), aplastamos
+        if pred.ndim == 4 and pred.shape[0] == 1:
+            pred = pred[0]
+        pred_lbl = pred.astype(np.uint8)
 
-    (sz, sy, sx) = pred.shape
-    (gz, gy, gx) = gt_shape
+    return pred_lbl
 
-    (s0z, s1z), (d0z, d1z) = bounds(sz, gz)
-    (s0y, s1y), (d0y, d1y) = bounds(sy, gy)
-    (s0x, s1x), (d0x, d1x) = bounds(sx, gx)
+def align_pred_to_gt(pred_bin: np.ndarray, gt_bin: np.ndarray) -> np.ndarray:
+    """
+    Alinea sin desplazar: resize nearest de pred al tamaño de GT.
+    Evita center-crop/pad para no introducir offset espacial.
+    """
+    if pred_bin.shape == gt_bin.shape:
+        return pred_bin
+    resizer = Resize(spatial_size=gt_bin.shape, mode="nearest")
+    pred_t = torch.as_tensor(pred_bin[None, ...])  # [1, D, H, W]
+    return resizer(pred_t).squeeze(0).numpy()
 
-    out[d0z:d1z, d0y:d1y, d0x:d1x] = pred[s0z:s1z, s0y:s1y, s0x:s1x]
-    return out
+# --- Main ---
+if __name__ == "__main__":
+    pred_dir = "/home/trawlins/tesis/prediction_results/segmamba"
+    data_dir = "/home/trawlins/tesis/data/fullres/train"
+    metrics_dir = "/home/trawlins/tesis/prediction_results/result_metrics"
+    os.makedirs(metrics_dir, exist_ok=True)
 
-def main():
-    args = parse_args()
-    os.makedirs(args.out_dir, exist_ok=True)
+    result_list = []
+    case_ids = []
 
-    pred_files = sorted([f for f in os.listdir(args.pred_dir) if f.endswith("_pred.npy")])
-    per_case = []  # (case_id, dice, hd95)
+    # Lista basada en *_pred.npy para identificar casos; luego preferimos *_probs.npy si existe
+    pred_files = sorted([f for f in os.listdir(pred_dir) if f.endswith("_pred.npy")])
 
-    for fname in tqdm(pred_files, desc="Metrics"):
+    for fname in tqdm(pred_files):
         case_id = fname.replace("_pred.npy", "")
 
-        pred_path = os.path.join(args.pred_dir, fname)
-        seg_path  = os.path.join(args.data_dir, f"{case_id}_seg.npy")
-        pkl_path  = os.path.join(args.data_dir, f"{case_id}.pkl")
+        pred_base = os.path.join(pred_dir, case_id)               # sin sufijo
+        seg_path  = os.path.join(data_dir, f"{case_id}_seg.npy")
+        pkl_path  = os.path.join(data_dir, f"{case_id}.pkl")
 
-        if not (os.path.exists(seg_path) and os.path.exists(pkl_path)):
-            print(f"⚠️  Archivos faltantes para {case_id}, se omite.")
+        if not os.path.exists(seg_path) or not os.path.exists(pkl_path):
+            print(f"⚠️ Archivos faltantes para {case_id}, se omite.")
             continue
 
-        pred = np.load(pred_path)
-        gt   = np.load(seg_path)
+        # Cargar predicción (etiquetas) y GT
+        pred_lbl = load_prediction_label(pred_base)               # (D,H,W) int
+        gt       = np.load(seg_path)
+        if gt.ndim == 4 and gt.shape[0] == 1:
+            gt = gt[0]
+        elif gt.ndim == 4:
+            # Si viniera con canales múltiples inesperados, toma el primero
+            gt = gt[0]
 
-        # Quita canal si viniera con (1, D, H, W)
-        if pred.ndim == 4: pred = pred[0]
-        if gt.ndim   == 4: gt   = gt[0]
+        # Binarizar SOLO hígado
+        gt_bin   = (gt == LIVER_ID).astype(np.uint8)
+        pred_bin = (pred_lbl == LIVER_ID).astype(np.uint8)
 
-        # Alinea forma SIN reescalar (mejor para HD95)
-        if pred.shape != gt.shape:
-            pred = match_shape_to_gt(pred, gt.shape)
+        # Alinear formas sin shift
+        pred_bin = align_pred_to_gt(pred_bin, gt_bin)
 
-        # Binariza
-        pred = pred.astype(bool)
-        gt   = gt.astype(bool)
-
+        # Spacing para HD95 en orden (z,y,x)
         info = load_pkl(pkl_path)
-        spacing = info.get("spacing", info.get("itk_spacing", [1,1,1]))
+        spacing = info.get("spacing", info.get("itk_spacing", [1, 1, 1]))
+        if spacing is None:
+            spacing = [1, 1, 1]
+        # Si venía (x,y,z), invertimos a (z,y,x)
+        spacing = spacing[::-1]
 
-        dsc, hd = cal_metric(gt, pred, spacing)
-        per_case.append((case_id, dsc, hd))
+        # Métricas
+        m = cal_metric(gt_bin.astype(bool), pred_bin.astype(bool), spacing)
+        result_list.append(m)
+        case_ids.append(case_id)
 
-    if not per_case:
-        print("❌ No se calcularon métricas (0 casos válidos).")
-        return
+    if not result_list:
+        print("❌ No se calcularon métricas (no hubo casos válidos).")
+        exit(0)
 
-    # Save per-case CSV
-    csv_path = os.path.join(args.out_dir, "segmamba_liver.csv")
+    result_array = np.stack(result_list, axis=0)  # [N, 2] -> dice, hd95
+    np.save(os.path.join(metrics_dir, "segmamba_liver.npy"), result_array)
+
+    # CSV
+    csv_path = os.path.join(metrics_dir, "segmamba_liver.csv")
     with open(csv_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["Case ID", "Dice", "HD95"])
-        for cid, dsc, hd in per_case:
-            w.writerow([cid, dsc, hd])
-
-    # Save npy (solo métricas)
-    arr = np.array([[d, h] for _, d, h in per_case], dtype=np.float32)
-    npy_path = os.path.join(args.out_dir, "segmamba_liver.npy")
-    np.save(npy_path, arr)
+        writer = csv.writer(f)
+        writer.writerow(["Case ID", "Dice", "HD95"])
+        for cid, metrics in zip(case_ids, result_array):
+            writer.writerow([cid, float(metrics[0]), float(metrics[1])])
 
     # Resumen
-    dice_vals = arr[:,0]; hd_vals = arr[:,1]
     print("✅ Métricas calculadas")
-    print(f"Total casos: {len(per_case)}")
-    print(f"Dice  promedio: {dice_vals.mean():.4f} | mediana: {np.median(dice_vals):.4f} | std: {dice_vals.std():.4f}")
-    print(f"HD95  promedio: {hd_vals.mean():.2f}  | mediana: {np.median(hd_vals):.2f}  | std: {hd_vals.std():.2f}")
-    print(f"📄 Guardado en:\n - {npy_path}\n - {csv_path}")
-
-if __name__ == "__main__":
-    main()
+    print("Total casos:", len(result_array))
+    print("Dice promedio:", float(result_array[:, 0].mean()))
+    print("HD95 promedio:", float(result_array[:, 1].mean()))
+    print(f"📄 Guardado en:\n - {metrics_dir}/segmamba_liver.npy\n - {metrics_dir}/segmamba_liver.csv")
