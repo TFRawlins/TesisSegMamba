@@ -72,14 +72,17 @@ def main():
             sample = test_dataset[i]
             image = sample["data"].unsqueeze(0).to(device, non_blocking=True)  # (1, C, D, H, W)
             props = sample.get("properties", {})
-            logits = inferer(inputs=image, network=model)
-            pred = torch.argmax(logits, dim=1).squeeze(0).detach().cpu().numpy()  # (D, H, W)
-
-            case_name = best_case_name(props, i)
-            out_npy = os.path.join(args.save_path, f"{case_name}_pred.npy")
-            np.save(out_npy, pred)
-
-    print(f"\n✅ Inferencia completada. Resultados en: {args.save_path}")
+            logits = inferer(inputs=image, network=model)              # [1, C, D, H, W]
+            probs  = torch.softmax(logits, dim=1).squeeze(0).cpu()     # [C, D, H, W] (torch)
+            pred   = torch.argmax(probs, dim=0).cpu().numpy()          # [D, H, W]   (numpy)
+            
+            case_name = best_case_name(props, i)                       # <-- usa tu helper actual
+            os.makedirs(args.save_path, exist_ok=True)
+            
+            # Probs: si quieres ahorrar espacio, podrías castear a float16
+            np.save(os.path.join(args.save_path, f"{case_name}_probs.npy"), probs.numpy())
+            np.save(os.path.join(args.save_path, f"{case_name}_pred.npy"),  pred)
+            print(f"\n✅ Inferencia completada. Resultados en: {args.save_path}")
 
 if __name__ == "__main__":
     main()
