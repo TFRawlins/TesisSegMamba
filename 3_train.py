@@ -11,33 +11,32 @@ from model_segmamba.segmamba import SegMamba
 from light_training.dataloading.dataset import get_train_val_test_loader_from_train
 from light_training.evaluation.metric import dice
 from light_training.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
-import os, sys, io
-from datetime import datetime
+import logging
+import sys
+import os
+from logging.handlers import RotatingFileHandler
 
-# Carpeta y nombre del log (reinicia en cada run)
 os.makedirs("logs", exist_ok=True)
 log_path = os.path.join("logs", "train.log")
 
-class Tee(io.TextIOBase):
-    def __init__(self, *streams):
-        self.streams = streams
-    def write(self, data):
-        for s in self.streams:
-            s.write(data)
-            s.flush()
-        return len(data)
-    def flush(self):
-        for s in self.streams:
-            s.flush()
+logger = logging.getLogger()  # root logger
+logger.setLevel(logging.INFO)
 
-# Abrir archivo en modo "w" para reiniciar en cada entrenamiento
-_log_f = open(log_path, "w", buffering=1, encoding="utf-8")
+# Rotating file handler (evita archivos enormes)
+file_handler = RotatingFileHandler(log_path, maxBytes=50*1024*1024, backupCount=5, encoding="utf-8")
+file_handler.setLevel(logging.INFO)
+file_fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
+file_handler.setFormatter(file_fmt)
+logger.addHandler(file_handler)
 
-# Duplicar stdout y stderr a archivo + consola
-sys.stdout = Tee(sys.stdout, _log_f)
-sys.stderr = Tee(sys.stderr, _log_f)
+# Stream handler para consola (opcional)
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setLevel(logging.INFO)
+stream_handler.setFormatter(file_fmt)
+logger.addHandler(stream_handler)
 
-print(f"📄 Logging en: {log_path}")
+# Ejemplo: usar logger.info en vez de print
+logger.info(f"📄 Logging en: {log_path}")
 
 torch.backends.cudnn.benchmark = True  # mejor rendimiento en 3D con input size estable
 
@@ -159,6 +158,7 @@ class LiverTrainer(Trainer):
 
     def run(self):
         print(" Comenzando entrenamiento...\n")
+        logger.info(" Comenzando entrenamiento...\n")
         global_step = 0
         for epoch in range(self.max_epochs):
             self.model.train()
@@ -176,7 +176,8 @@ class LiverTrainer(Trainer):
             self.scheduler.step()
 
             avg_loss = float(np.mean(losses)) if losses else 0.0
-            print(f"📚 Epoch {epoch + 1}/{self.max_epochs} - Loss: {avg_loss:.4f}")
+            print(f"- Epoch {epoch + 1}/{self.max_epochs} - Loss: {avg_loss:.4f}")
+            logger.info(f"- Epoch {epoch + 1}/{self.max_epochs} - Loss: {avg_loss:.4f}")
 
             # Validación
             if (epoch + 1) % self.val_every == 0:
@@ -184,6 +185,7 @@ class LiverTrainer(Trainer):
                 dices = [self.validation_step(b) for b in self.val_loader]
                 avg_dice = float(np.mean(dices)) if dices else 0.0
                 print(f" Validation Dice: {avg_dice:.4f}")
+                logger.info(f" Validation Dice: {avg_dice:.4f}")
 
                 # Guardar el mejor modelo
                 if avg_dice > self.best_metric:
@@ -194,10 +196,13 @@ class LiverTrainer(Trainer):
                         os.path.join(self.save_dir, "best_model.pt")
                     )
                     print(f"Nuevo mejor modelo guardado (Epoch {self.best_metric_epoch})")
+                    logger.info(f"Nuevo mejor modelo guardado (Epoch {self.best_metric_epoch})")
 
             print(f"Epoch {epoch + 1} completado, avg loss: {avg_loss:.4f}")
+            logger.info(f"Epoch {epoch + 1} completado, avg loss: {avg_loss:.4f}")
 
         print(f"\nEntrenamiento finalizado. Mejor Dice: {self.best_metric:.4f} en epoch {self.best_metric_epoch}")
+        logger.info(f"\nEntrenamiento finalizado. Mejor Dice: {self.best_metric:.4f} en epoch {self.best_metric_epoch}")
 
 def main():
     parser = argparse.ArgumentParser()
