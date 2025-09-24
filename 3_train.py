@@ -198,8 +198,6 @@ class LiverTrainer(Trainer):
                     print(f"Nuevo mejor modelo guardado (Epoch {self.best_metric_epoch})")
                     logger.info(f"Nuevo mejor modelo guardado (Epoch {self.best_metric_epoch})")
 
-            print(f"Epoch {epoch + 1} completado, avg loss: {avg_loss:.4f}")
-            logger.info(f"Epoch {epoch + 1} completado, avg loss: {avg_loss:.4f}")
 
         print(f"\nEntrenamiento finalizado. Mejor Dice: {self.best_metric:.4f} en epoch {self.best_metric_epoch}")
         logger.info(f"\nEntrenamiento finalizado. Mejor Dice: {self.best_metric:.4f} en epoch {self.best_metric_epoch}")
