@@ -8,7 +8,7 @@ from model_segmamba.segmamba import SegMamba
 
 def main():
     # ==== Configuración general ====
-    model_path = "/home/trawlins/tesis/ckpts_seg/best_model.pt"            
+    model_path = "/home/trawlins/tesis/ckpts_seg/exp_d80/best_model.pt"            
     data_dir   = "/home/trawlins/tesis/data/fullres/train"                 
     save_path  = "/home/trawlins/tesis/prediction_results/segmamba"        
     os.makedirs(save_path, exist_ok=True)
