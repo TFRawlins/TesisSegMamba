@@ -4,16 +4,22 @@ import pickle
 import json
 from pathlib import Path
 import os, shutil, re
+from pathlib import Path
 
-data_filename = ["image.nii.gz"]
-seg_filename = "seg.nii.gz"
-
-base_dir = "./data/raw_data/"
-image_dir = "ColorectalVessels"
-
+# Fuentes nnU-Net (esto ya lo tenías bien)
 NNUNET_BASE = Path("/home/trawlins/tesis/data_nnUnet/nnUNet_raw/Dataset001_Colorectal")
 IMAGES_TR = NNUNET_BASE / "imagesTr"
 LABELS_TR = NNUNET_BASE / "labelsTr"
+
+# DESTINOS FUERA DEL REPO  👇
+base_dir = "/home/trawlins/tesis/data/colorectal/raw_data/"
+image_dir = "ColorectalVessels"
+
+OUT_ROOT = Path("/home/trawlins/tesis/data/colorectal/fullres/colorectal")
+OUT_TRAIN_IMG = OUT_ROOT / "train" / "images"
+OUT_TRAIN_LBL = OUT_ROOT / "train" / "labels"
+OUT_VAL_IMG   = OUT_ROOT / "val" / "images"
+OUT_VAL_LBL   = OUT_ROOT / "val" / "labels"
 
 def prepare_from_nnunet_to_rawdata(dryrun=False):
 
