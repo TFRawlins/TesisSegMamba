@@ -125,20 +125,35 @@ class ColorectalVesselsTrainer(Trainer):
             logits = self.model(image)
             preds = torch.argmax(logits, dim=1)  # (B, D, H, W)
     
-        preds_np = preds.cpu().numpy()
-        labels_np = label.cpu().numpy()
+        preds_np = preds.detach().cpu().numpy().astype(np.uint8)
+        labels_np = label.detach().cpu().numpy().astype(np.uint8)
     
         dices = []
         for p, g in zip(preds_np, labels_np):
             d = dice(p, g) if (p.sum() > 0 or g.sum() > 0) else 1.0
+            if isinstance(d, np.ndarray):
+                d = float(d)
+            elif torch.is_tensor(d):
+                d = float(d.detach().cpu().item())
+            else:
+                d = float(d)
             dices.append(d)
-    
-        return np.mean(dices)
+        return float(np.mean(dices)) if len(dices) > 0 else 0.0
             
     def validation_end(self, val_outputs):
 
-        mean_dice = float(np.mean(val_outputs))
-    
+        vals = []
+        for v in val_outputs:
+            if torch.is_tensor(v):
+                vals.append(float(v.detach().cpu().item()))
+            elif isinstance(v, np.ndarray):
+                vals.append(float(v))
+            elif isinstance(v, dict) and 'dice' in v:
+                vals.append(float(v['dice']))
+            else:
+                vals.append(float(v))
+                
+        mean_dice = float(np.mean(vals)) if len(vals) > 0 else 0.0
         self.log("dice_vena", mean_dice, step=self.epoch)
         self.log("mean_dice", mean_dice, step=self.epoch)
     
