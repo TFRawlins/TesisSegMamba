@@ -15,83 +15,6 @@ set_determinism(123)
 import os
 import argparse
 
-ROI_TGT = (128, 128, 128)  # (D, H, W)
-
-def crop_pad_center(arr, target=ROI_TGT):
-
-    assert arr.ndim == 4, f"Esperaba (C,D,H,W), llegó {arr.shape}"
-    C, D, H, W = arr.shape
-    tD, tH, tW = target
-
-    def _slice(sz, tgt):
-        if sz <= tgt:
-            return slice(0, sz)
-        start = (sz - tgt) // 2
-        return slice(start, start + tgt)
-
-    sD, sH, sW = _slice(D, tD), _slice(H, tH), _slice(W, tW)
-    arr = arr[:, sD, sH, sW]
-    
-    C, D2, H2, W2 = arr.shape
-    pD1 = (tD - D2) // 2 if D2 < tD else 0
-    pD2 = tD - D2 - pD1 if D2 < tD else 0
-    pH1 = (tH - H2) // 2 if H2 < tH else 0
-    pH2 = tH - H2 - pH1 if H2 < tH else 0
-    pW1 = (tW - W2) // 2 if W2 < tW else 0
-    pW2 = tW - W2 - pW1 if W2 < tW else 0
-
-    if pD1 or pD2 or pH1 or pH2 or pW1 or pW2:
-        arr = np.pad(arr,
-                     ((0, 0), (pD1, pD2), (pH1, pH2), (pW1, pW2)),
-                     mode="constant", constant_values=0)
-    return arr
-
-class ROIWrapper(Dataset):
-    """
-    Envuelve el dataset base (items dict con 'data','seg', opcionalmente 'properties')
-    y garantiza:
-      - canal primero (C,D,H,W)
-      - tamaño fijo ROI_TGT mediante crop+pad centrado
-      - tipos: data float32, seg long
-      - incluye 'properties' para satisfacer el dataloader
-    """
-    def __init__(self, base, roi=ROI_TGT):
-        self.base = base
-        self.roi = roi
-
-    def __len__(self):
-        return len(self.base)
-
-    def __getitem__(self, i):
-        item = self.base[i]
-        data = item["data"]
-        seg  = item["seg"]
-        props_in = item.get("properties", {})
-        if isinstance(data, torch.Tensor):
-            data = data.cpu().numpy()
-        if isinstance(seg, torch.Tensor):
-            seg = seg.cpu().numpy()
-        if data.ndim == 3:  # (D,H,W) -> (1,D,H,W)
-            data = data[None, ...]
-        if seg.ndim == 3:
-            seg = seg[None, ...]
-
-        orig_shape_data = tuple(data.shape)
-        orig_shape_seg  = tuple(seg.shape)
-
-        data = crop_pad_center(data, self.roi)
-        seg  = crop_pad_center(seg,  self.roi)
-        data = torch.from_numpy(data).float()
-        seg  = torch.from_numpy(seg).long()
-        properties = dict(props_in)
-        properties.setdefault("original_data_shape", orig_shape_data)
-        properties.setdefault("original_seg_shape",  orig_shape_seg)
-        properties["roi_target"] = tuple(self.roi)
-        properties["final_data_shape"] = tuple(data.shape)
-        properties["final_seg_shape"]  = tuple(seg.shape)
-
-        return {"data": data, "seg": seg, "properties": properties}
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--exp_name", default="colorectal")
@@ -256,6 +179,4 @@ if __name__ == "__main__":
     )
 
     train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
-    train_ds = ROIWrapper(train_ds, roi=ROI_TGT)
-    val_ds   = ROIWrapper(val_ds,   roi=ROI_TGT)
     trainer.train(train_dataset=train_ds, val_dataset=val_ds)
