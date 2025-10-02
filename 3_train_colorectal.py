@@ -47,6 +47,14 @@ def crop_pad_center(arr, target=ROI_TGT):
     return arr
 
 class ROIWrapper(Dataset):
+    """
+    Envuelve el dataset base (items dict con 'data','seg', opcionalmente 'properties')
+    y garantiza:
+      - canal primero (C,D,H,W)
+      - tamaño fijo ROI_TGT mediante crop+pad centrado
+      - tipos: data float32, seg long
+      - incluye 'properties' para satisfacer el dataloader
+    """
     def __init__(self, base, roi=ROI_TGT):
         self.base = base
         self.roi = roi
@@ -58,23 +66,32 @@ class ROIWrapper(Dataset):
         item = self.base[i]
         data = item["data"]
         seg  = item["seg"]
-
-        if data.ndim == 3:
-            data = data[None, ...]
-        if seg.ndim == 3:
-            seg = seg[None, ...]
-
+        props_in = item.get("properties", {})
         if isinstance(data, torch.Tensor):
             data = data.cpu().numpy()
         if isinstance(seg, torch.Tensor):
             seg = seg.cpu().numpy()
+        if data.ndim == 3:  # (D,H,W) -> (1,D,H,W)
+            data = data[None, ...]
+        if seg.ndim == 3:
+            seg = seg[None, ...]
+
+        orig_shape_data = tuple(data.shape)
+        orig_shape_seg  = tuple(seg.shape)
 
         data = crop_pad_center(data, self.roi)
         seg  = crop_pad_center(seg,  self.roi)
         data = torch.from_numpy(data).float()
         seg  = torch.from_numpy(seg).long()
+        properties = dict(props_in)
+        properties.setdefault("original_data_shape", orig_shape_data)
+        properties.setdefault("original_seg_shape",  orig_shape_seg)
+        properties["roi_target"] = tuple(self.roi)
+        properties["final_data_shape"] = tuple(data.shape)
+        properties["final_seg_shape"]  = tuple(seg.shape)
 
-        return {"data": data, "seg": seg}
+        return {"data": data, "seg": seg, "properties": properties}
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--exp_name", default="colorectal")
