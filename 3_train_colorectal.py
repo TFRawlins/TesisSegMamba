@@ -167,7 +167,7 @@ if __name__ == "__main__":
         batch_size=batch_size,
         device=device,
         logdir=logdir,
-        val_every=val_every,
+        val_every=5,
         num_gpus=num_gpus,
         master_port=17759,
         training_script=__file__
