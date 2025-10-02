@@ -2,6 +2,38 @@ import numpy as np
 from typing import Union, Tuple
 import time 
 
+def pad_or_crop_to(arr: np.ndarray, target: tuple[int, int, int, int]) -> np.ndarray:
+    assert arr.ndim == 4, f"Se esperaba 4D (C,H,W,D), llegó {arr.shape}"
+
+    # 1) Crop centrado si sobra
+    sl = []
+    for ax in range(4):
+        cur, tgt = arr.shape[ax], target[ax]
+        if cur > tgt:
+            s = (cur - tgt) // 2
+            sl.append(slice(s, s + tgt))
+        else:
+            sl.append(slice(0, cur))
+    arr = arr[tuple(sl)]
+
+    # 2) Pad centrado si falta
+    pad_spec = []
+    for ax in range(4):
+        cur, tgt = arr.shape[ax], target[ax]
+        if cur < tgt:
+            total = tgt - cur
+            before = total // 2
+            after = total - before
+            pad_spec.append((before, after))
+        else:
+            pad_spec.append((0, 0))
+    if any(b + a for b, a in pad_spec):
+        arr = np.pad(arr, pad_spec, mode='constant', constant_values=0)
+
+    # Seguridad
+    assert arr.shape == target, f"Shape final {arr.shape} != target {target}"
+    return arr
+
 class DataLoaderMultiProcess:
     def __init__(self, dataset, 
                  patch_size,
