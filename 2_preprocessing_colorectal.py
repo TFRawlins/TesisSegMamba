@@ -3,7 +3,6 @@ import numpy as np
 import pickle
 import json
 from pathlib import Path
-import shutil
 import os, shutil, re
 
 data_filename = ["image.nii.gz"]
