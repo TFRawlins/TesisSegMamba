@@ -119,16 +119,16 @@ class ColorectalVesselsTrainer(Trainer):
             logits = self.model(image)
             preds = torch.argmax(logits, dim=1)  # (B, D, H, W)
     
-        # convertir a numpy
         preds_np = preds.cpu().numpy()
         labels_np = label.cpu().numpy()
     
         dices = []
         for p, g in zip(preds_np, labels_np):
-            dices.append(self.cal_metric(g, p))  # devuelve [dice, dummy]
-
-        return np.mean(dices, axis=0)
-        
+            d = dice(p, g) if (p.sum() > 0 or g.sum() > 0) else 1.0
+            dices.append(d)
+    
+        return np.mean(dices)
+            
     def validation_end(self, val_outputs):
         dices = np.array(val_outputs)  # (N, 1)
         d_vena = dices[:, 0].mean()
