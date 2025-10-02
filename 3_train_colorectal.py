@@ -1,0 +1,144 @@
+import numpy as np
+from light_training.dataloading.dataset import get_train_val_test_loader_from_train
+import torch
+import torch.nn as nn
+from monai.inferers import SlidingWindowInferer
+from light_training.evaluation.metric import dice
+from light_training.trainer import Trainer
+from monai.utils import set_determinism
+from light_training.utils.files_helper import save_new_model_and_delete_last
+from monai.losses.dice import DiceLoss  # (no la usamos, pero la dejamos por paridad)
+set_determinism(123)
+import os
+
+# === idéntico al original, salvo que seguimos usando el mismo data_dir ===
+data_dir = "./data/fullres/train"
+logdir = f"./logs/segmamba"
+model_save_path = os.path.join(logdir, "model")
+augmentation = True
+
+env = "pytorch"
+max_epoch = 1000
+batch_size = 2
+val_every = 2
+num_gpus = 1
+device = "cuda:0"
+roi_size = [128, 128, 128]
+
+def func(m, epochs):
+    return np.exp(-10*(1- m / epochs)**2)
+
+class ColorectalVesselsTrainer(Trainer):
+    def __init__(self, env_type, max_epochs, batch_size, device="cpu", val_every=1, num_gpus=1,
+                 logdir="./logs/", master_ip='localhost', master_port=17750, training_script="train.py"):
+        super().__init__(env_type, max_epochs, batch_size, device, val_every, num_gpus,
+                         logdir, master_ip, master_port, training_script)
+
+        self.window_infer = SlidingWindowInferer(roi_size=roi_size, sw_batch_size=1, overlap=0.5)
+        self.augmentation = augmentation
+
+        # === cambio mínimo: 1 canal de entrada, 2 clases (fondo, vena) ===
+        from model_segmamba.segmamba import SegMamba
+        self.model = SegMamba(
+            in_chans=1,
+            out_chans=2,
+            depths=[2, 2, 2, 2],
+            feat_size=[48, 96, 192, 384]
+        )
+
+        self.patch_size = roi_size
+        self.best_mean_dice = 0.0
+
+        # mismas elecciones que el original
+        self.optimizer = torch.optim.SGD(
+            self.model.parameters(), lr=1e-2, weight_decay=3e-5, momentum=0.99, nesterov=True
+        )
+        self.scheduler_type = "poly"
+
+        # === pérdida: CE como en el original (mismo espíritu del paper) ===
+        self.cross = nn.CrossEntropyLoss()
+
+    def get_input(self, batch):
+        # Mantener las mismas claves del dataloader original
+        image = batch["data"]   # (B, 1, D, H, W)
+        label = batch["seg"]    # (B, 1, D, H, W) con {0=fondo, 1=vena}
+        label = label[:, 0].long()  # CE espera (B, D, H, W) con enteros
+        return image, label
+
+    def training_step(self, batch):
+        image, label = self.get_input(batch)
+        pred = self.model(image)               # (B, 2, D, H, W)
+        loss = self.cross(pred, label)         # CE 2 clases
+        self.log("training_loss", loss, step=self.global_step)
+        return loss
+
+    def cal_metric(self, gt, pred):
+        # gt/pred booleanos o {0,1}; devolvemos Dice del canal "vena"
+        if pred.sum() > 0 and gt.sum() > 0:
+            d = dice(pred, gt)
+            return np.array([d, 50])
+        elif gt.sum() == 0 and pred.sum() == 0:
+            return np.array([1.0, 50])
+        else:
+            return np.array([0.0, 50])
+
+    def validation_step(self, batch):
+        image, label = self.get_input(batch)
+
+        with torch.no_grad():
+            logits = self.model(image)              # (B, 2, ...)
+            pred_cls = torch.argmax(logits, dim=1)  # (B, D, H, W)
+
+        # canal vena = clase 1
+        pred_vena = (pred_cls == 1).float().cpu().numpy()
+        gt_vena   = (label == 1).float().cpu().numpy()
+
+        d_vena, _ = self.cal_metric(gt_vena, pred_vena)
+        return [d_vena]
+
+    def validation_end(self, val_outputs):
+        dices = np.array(val_outputs)  # (N, 1)
+        d_vena = dices[:, 0].mean()
+        mean_dice = d_vena  # sólo una clase de interés
+
+        self.log("dice_vena", d_vena, step=self.epoch)
+        self.log("mean_dice", mean_dice, step=self.epoch)
+
+        # guardado igual que el original
+        if mean_dice > self.best_mean_dice:
+            self.best_mean_dice = mean_dice
+            save_new_model_and_delete_last(
+                self.model,
+                os.path.join(model_save_path, f"best_model_{mean_dice:.4f}.pt"),
+                delete_symbol="best_model"
+            )
+
+        save_new_model_and_delete_last(
+            self.model,
+            os.path.join(model_save_path, f"final_model_{mean_dice:.4f}.pt"),
+            delete_symbol="final_model"
+        )
+
+        if (self.epoch + 1) % 100 == 0:
+            torch.save(
+                self.model.state_dict(),
+                os.path.join(model_save_path, f"tmp_model_ep{self.epoch}_{mean_dice:.4f}.pt")
+            )
+
+        print(f"[val] dice_vena={d_vena:.4f} | mean_dice={mean_dice:.4f}")
+
+if __name__ == "__main__":
+    trainer = ColorectalVesselsTrainer(
+        env_type=env,
+        max_epochs=max_epoch,
+        batch_size=batch_size,
+        device=device,
+        logdir=logdir,
+        val_every=val_every,
+        num_gpus=num_gpus,
+        master_port=17759,
+        training_script=__file__
+    )
+
+    train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
+    trainer.train(train_dataset=train_ds, val_dataset=val_ds)
