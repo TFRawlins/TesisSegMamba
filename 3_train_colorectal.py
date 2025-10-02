@@ -110,7 +110,25 @@ class ColorectalVesselsTrainer(Trainer):
         self.log("training_loss", loss.detach(), step=self.global_step)
         return loss.detach()
 
+    def validation_step(self, batch):
+        self.model.eval()
+        image, label = self.get_input(batch)
+        image, label = image.to(self.device), label.to(self.device)
+    
+        with torch.no_grad():
+            logits = self.model(image)
+            preds = torch.argmax(logits, dim=1)  # (B, D, H, W)
+    
+        # convertir a numpy
+        preds_np = preds.cpu().numpy()
+        labels_np = label.cpu().numpy()
+    
+        dices = []
+        for p, g in zip(preds_np, labels_np):
+            dices.append(self.cal_metric(g, p))  # devuelve [dice, dummy]
 
+        return np.mean(dices, axis=0)
+        
     def validation_end(self, val_outputs):
         dices = np.array(val_outputs)  # (N, 1)
         d_vena = dices[:, 0].mean()
