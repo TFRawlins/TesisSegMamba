@@ -58,7 +58,9 @@ class ColorectalVesselsTrainer(Trainer):
             depths=[2, 2, 2, 2],
             feat_size=[48, 96, 192, 384]
         )
-
+        if num_gpus > 1:
+            self.model = torch.nn.DataParallel(self.model, device_ids=list(range(num_gpus)))
+                     
         self.patch_size = roi_size
         self.best_mean_dice = 0.0
 
