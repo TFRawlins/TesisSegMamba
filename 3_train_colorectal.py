@@ -95,19 +95,21 @@ class ColorectalVesselsTrainer(Trainer):
         else:
             return np.array([0.0, 50])
 
-    def validation_step(self, batch):
-        image, label = self.get_input(batch)
+    def train_step(self, batch):
+        self.model.train()
+        image, label = batch["data"].to(self.device), batch["seg"][:, 0].long().to(self.device)
+    
+        self.optimizer.zero_grad(set_to_none=True)
+        with autocast(device_type="cuda", dtype=torch.float16):
+            logits = self.model(image)          # (B, 2, D, H, W)
+            loss = self.cross(logits, label)    # CE 2 clases
+    
+        self.scaler.scale(loss).backward()
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+        self.log("training_loss", loss.detach(), step=self.global_step)
+        return loss.detach()
 
-        with torch.no_grad():
-            logits = self.model(image)              # (B, 2, ...)
-            pred_cls = torch.argmax(logits, dim=1)  # (B, D, H, W)
-
-        # canal vena = clase 1
-        pred_vena = (pred_cls == 1).float().cpu().numpy()
-        gt_vena   = (label == 1).float().cpu().numpy()
-
-        d_vena, _ = self.cal_metric(gt_vena, pred_vena)
-        return [d_vena]
 
     def validation_end(self, val_outputs):
         dices = np.array(val_outputs)  # (N, 1)
