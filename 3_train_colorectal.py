@@ -189,4 +189,24 @@ if __name__ == "__main__":
     )
 
     train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
+    
+    ROI = tuple(roi_size)
+
+    train_xform = Compose([
+        EnsureChannelFirstd(keys=["data"]),
+        Lambda(keys="seg", func=lambda x: x if x.ndim == 4 else x[None, ...]),
+        RandSpatialCropd(keys=["data", "seg"], roi_size=ROI, random_center=True, random_size=False),
+        SpatialPadd(keys=["data", "seg"], spatial_size=ROI),
+    ])
+    
+    val_xform = Compose([
+        EnsureChannelFirstd(keys=["data"]),
+        Lambda(keys="seg", func=lambda x: x if x.ndim == 4 else x[None, ...]),
+        CenterSpatialCropd(keys=["data", "seg"], roi_size=ROI),
+        SpatialPadd(keys=["data", "seg"], spatial_size=ROI),
+    ])
+    
+    train_ds = TransformWrapper(train_ds, train_xform)
+    val_ds   = TransformWrapper(val_ds,   val_xform)
+    
     trainer.train(train_dataset=train_ds, val_dataset=val_ds)
