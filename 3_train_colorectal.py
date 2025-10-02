@@ -15,6 +15,39 @@ set_determinism(123)
 import os
 import argparse
 
+def pad_or_crop_to(arr: np.ndarray, target: tuple[int, int, int, int]) -> np.ndarray:
+    """
+    Arr: (C, H, W, D). Hace center-crop o pad para llegar exactamente a target.
+    target: (C, H, W, D)
+    """
+    assert arr.ndim == 4, f"Se esperaba 4D (C,H,W,D), llegó {arr.shape}"
+    slices = []
+    for ax in range(4):
+        cur = arr.shape[ax]
+        tgt = target[ax]
+        if cur > tgt:
+            start = (cur - tgt) // 2
+            end = start + tgt
+            slices.append(slice(start, end))
+        else:
+            slices.append(slice(0, cur))
+    arr = arr[tuple(slices)]
+    pad_spec = []
+    for ax in range(4):
+        cur = arr.shape[ax]
+        tgt = target[ax]
+        if cur < tgt:
+            total = tgt - cur
+            before = total // 2
+            after = total - before
+            pad_spec.append((before, after))
+        else:
+            pad_spec.append((0, 0))
+
+    if any(b + a > 0 for (b, a) in pad_spec):
+        arr = np.pad(arr, pad_spec, mode='constant', constant_values=0)
+    assert arr.shape == target, f"Shape final {arr.shape} != target {target}"
+    return arr
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--exp_name", default="colorectal")
@@ -41,6 +74,7 @@ val_every = 5
 num_gpus = 2
 device = "cuda:0"
 roi_size = [128, 128, 128]
+
 
 def func(m, epochs):
     return np.exp(-10*(1- m / epochs)**2)
