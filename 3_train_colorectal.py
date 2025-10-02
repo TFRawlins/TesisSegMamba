@@ -7,10 +7,24 @@ from light_training.evaluation.metric import dice
 from light_training.trainer import Trainer
 from monai.utils import set_determinism
 from light_training.utils.files_helper import save_new_model_and_delete_last
-from monai.losses.dice import DiceLoss  # (no la usamos, pero la dejamos por paridad)
+from monai.losses.dice import DiceLoss
+from monai.transforms import Compose, RandSpatialCropd, CenterSpatialCropd, SpatialPadd, EnsureChannelFirstd, Lambda
+from torch.utils.data import Dataset
+
 set_determinism(123)
 import os
 import argparse
+
+class TransformWrapper(Dataset):
+    def __init__(self, base, xform):
+        self.base = base
+        self.xform = xform
+    def __len__(self):
+        return len(self.base)
+    def __getitem__(self, i):
+        item = self.base[i]
+        return self.xform(item)
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--exp_name", default="colorectal")
