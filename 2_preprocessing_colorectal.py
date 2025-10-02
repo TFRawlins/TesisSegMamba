@@ -16,10 +16,7 @@ IMAGES_TR = NNUNET_BASE / "imagesTr"
 LABELS_TR = NNUNET_BASE / "labelsTr"
 
 def prepare_from_nnunet_to_rawdata(dryrun=False):
-    """
-    Crea ./data/raw_data/ColorectalVessels/<ID>/{image.nii.gz, seg.nii.gz}
-    a partir de nnUNet_raw/.../{imagesTr,labelsTr}. No modifica el preprocessor.
-    """
+
     out_root = Path(base_dir) / image_dir
     out_root.mkdir(parents=True, exist_ok=True)
 
