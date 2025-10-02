@@ -42,7 +42,7 @@ def func(m, epochs):
     return np.exp(-10*(1- m / epochs)**2)
 
 class ColorectalVesselsTrainer(Trainer):
-    def __init__(self, env_type, max_epochs, batch_size, device="cpu", val_every=1, num_gpus=1,
+    def __init__(self, env_type, max_epochs, batch_size, device="cpu", val_every=1, num_gpus=2,
                  logdir="./logs/", master_ip='localhost', master_port=17750, training_script="train.py"):
         super().__init__(env_type, max_epochs, batch_size, device, val_every, num_gpus,
                          logdir, master_ip, master_port, training_script)
