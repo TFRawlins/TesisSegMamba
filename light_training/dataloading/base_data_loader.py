@@ -137,8 +137,13 @@ class DataLoaderMultiProcess:
             target_shape = (1, 128, 128, 128)
             data_fixed = pad_or_crop_to(data, target_shape)
             data_all[j] = data_fixed
-            seg_all[j] = np.pad(seg, ((0, 0), *padding), 'constant', constant_values=0)
-
+            seg_fixed = pad_or_crop_to(seg, target_shape_seg)
+            #seg_all[j] = np.pad(seg, ((0, 0), *padding), 'constant', constant_values=0)
+            if seg_fixed.dtype != seg_all.dtype:
+                seg_fixed = seg_fixed.astype(seg_all.dtype, copy=False)
+            
+            seg_all[j] = seg_fixed
+            
             if data_global is not None :
                 data_all_global[j] = data_global
 
