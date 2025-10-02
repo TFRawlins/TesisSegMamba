@@ -13,15 +13,19 @@ import os
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--exp_name", default="colorectal")   # <— NUEVO
+parser.add_argument("--exp_name", default="colorectal")
+parser.add_argument("--data_dir", required=True)
+parser.add_argument("--save_dir", default=None)
+parser.add_argument("--epochs", type=int, default=200)
+parser.add_argument("--batch_size", type=int, default=2)
+parser.add_argument("--sw_batch_size", type=int, default=1)
 args = parser.parse_args()
+
 EXP_NAME = args.exp_name
+data_dir = args.data_dir
+logdir = f"./logs/{EXP_NAME}"
+model_save_path = args.save_dir or os.path.join("./ckpts_seg", EXP_NAME, "model")
 
-# Reemplaza tus rutas actuales por estas dos (el resto del código queda igual)
-logdir = f"./logs/{EXP_NAME}"                             # antes: ./logs/segmamba (o similar)
-model_save_path = os.path.join("./ckpts_seg", EXP_NAME, "model")  # antes: ./ckpts_seg/model
-
-# y crea los dirs si no existen (una vez):
 os.makedirs(logdir, exist_ok=True)
 os.makedirs(model_save_path, exist_ok=True)
 augmentation = True
