@@ -101,7 +101,10 @@ class DataLoaderMultiProcess:
             s = time.time()
             padding = [(-min(0, bbox_lbs[i]), max(bbox_ubs[i] - shape[i], 0)) for i in range(dim)]
             # print(f"box is {bbox_lbs, bbox_ubs}, padding is {padding}")
-            data_all[j] = np.pad(data, ((0, 0), *padding), 'constant', constant_values=0)
+            #data_all[j] = np.pad(data, ((0, 0), *padding), 'constant', constant_values=0)
+            target_shape = (1, 128, 128, 128)
+            data_fixed = pad_or_crop_to(data, target_shape)
+            data_all[j] = data_fixed
             seg_all[j] = np.pad(seg, ((0, 0), *padding), 'constant', constant_values=0)
 
             if data_global is not None :
