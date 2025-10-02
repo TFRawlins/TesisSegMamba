@@ -30,7 +30,7 @@ env = "pytorch"
 max_epoch = 200
 batch_size = 2
 val_every = 2
-num_gpus = 1
+num_gpus = 2
 device = "cuda:0"
 roi_size = [128, 128, 128]
 
