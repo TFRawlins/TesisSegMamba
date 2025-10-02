@@ -4,6 +4,7 @@ import pickle
 import json
 from pathlib import Path
 import shutil
+import os, shutil, re
 
 data_filename = ["image.nii.gz"]
 seg_filename = "seg.nii.gz"
