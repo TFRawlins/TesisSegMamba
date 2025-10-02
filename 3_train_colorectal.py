@@ -132,14 +132,12 @@ class ColorectalVesselsTrainer(Trainer):
         return np.mean(dices)
             
     def validation_end(self, val_outputs):
-        dices = np.array(val_outputs)  # (N, 1)
-        d_vena = dices[:, 0].mean()
-        mean_dice = d_vena  # sólo una clase de interés
 
-        self.log("dice_vena", d_vena, step=self.epoch)
+        mean_dice = float(np.mean(val_outputs))
+    
+        self.log("dice_vena", mean_dice, step=self.epoch)
         self.log("mean_dice", mean_dice, step=self.epoch)
-
-        # guardado igual que el original
+    
         if mean_dice > self.best_mean_dice:
             self.best_mean_dice = mean_dice
             save_new_model_and_delete_last(
@@ -147,20 +145,21 @@ class ColorectalVesselsTrainer(Trainer):
                 os.path.join(model_save_path, f"best_model_{mean_dice:.4f}.pt"),
                 delete_symbol="best_model"
             )
-
+    
         save_new_model_and_delete_last(
             self.model,
             os.path.join(model_save_path, f"final_model_{mean_dice:.4f}.pt"),
             delete_symbol="final_model"
         )
-
+    
         if (self.epoch + 1) % 100 == 0:
             torch.save(
                 self.model.state_dict(),
                 os.path.join(model_save_path, f"tmp_model_ep{self.epoch}_{mean_dice:.4f}.pt")
             )
+    
+        print(f"[val] dice_vena={mean_dice:.4f} | mean_dice={mean_dice:.4f}")
 
-        print(f"[val] dice_vena={d_vena:.4f} | mean_dice={mean_dice:.4f}")
 
 if __name__ == "__main__":
     trainer = ColorectalVesselsTrainer(
