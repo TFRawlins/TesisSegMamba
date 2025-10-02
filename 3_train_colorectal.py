@@ -10,15 +10,24 @@ from light_training.utils.files_helper import save_new_model_and_delete_last
 from monai.losses.dice import DiceLoss  # (no la usamos, pero la dejamos por paridad)
 set_determinism(123)
 import os
+import argparse
 
-# === idéntico al original, salvo que seguimos usando el mismo data_dir ===
-data_dir = "./data/fullres/train"
-logdir = f"./logs/segmamba"
-model_save_path = os.path.join(logdir, "model")
+parser = argparse.ArgumentParser()
+parser.add_argument("--exp_name", default="colorectal")   # <— NUEVO
+args = parser.parse_args()
+EXP_NAME = args.exp_name
+
+# Reemplaza tus rutas actuales por estas dos (el resto del código queda igual)
+logdir = f"./logs/{EXP_NAME}"                             # antes: ./logs/segmamba (o similar)
+model_save_path = os.path.join("./ckpts_seg", EXP_NAME, "model")  # antes: ./ckpts_seg/model
+
+# y crea los dirs si no existen (una vez):
+os.makedirs(logdir, exist_ok=True)
+os.makedirs(model_save_path, exist_ok=True)
 augmentation = True
 
 env = "pytorch"
-max_epoch = 1000
+max_epoch = 200
 batch_size = 2
 val_every = 2
 num_gpus = 1
