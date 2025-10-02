@@ -11,7 +11,7 @@ seg_filename = "seg.nii.gz"
 base_dir = "./data/raw_data/"
 image_dir = "ColorectalVessels"
 
-NNUNET_BASE = Path.home() / "tesis" / "data_nnUnet" / "nnUNet_raw" / "Dataset001_Colorectal"
+NNUNET_BASE = Path("/home/trawlins/tesis/data_nnUnet/nnUNet_raw/Dataset001_Colorectal")
 IMAGES_TR = NNUNET_BASE / "imagesTr"
 LABELS_TR = NNUNET_BASE / "labelsTr"
 
