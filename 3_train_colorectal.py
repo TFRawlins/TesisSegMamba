@@ -15,16 +15,66 @@ set_determinism(123)
 import os
 import argparse
 
-class TransformWrapper(Dataset):
-    def __init__(self, base, xform):
+ROI_TGT = (128, 128, 128)  # (D, H, W)
+
+def crop_pad_center(arr, target=ROI_TGT):
+
+    assert arr.ndim == 4, f"Esperaba (C,D,H,W), llegó {arr.shape}"
+    C, D, H, W = arr.shape
+    tD, tH, tW = target
+
+    def _slice(sz, tgt):
+        if sz <= tgt:
+            return slice(0, sz)
+        start = (sz - tgt) // 2
+        return slice(start, start + tgt)
+
+    sD, sH, sW = _slice(D, tD), _slice(H, tH), _slice(W, tW)
+    arr = arr[:, sD, sH, sW]
+    
+    C, D2, H2, W2 = arr.shape
+    pD1 = (tD - D2) // 2 if D2 < tD else 0
+    pD2 = tD - D2 - pD1 if D2 < tD else 0
+    pH1 = (tH - H2) // 2 if H2 < tH else 0
+    pH2 = tH - H2 - pH1 if H2 < tH else 0
+    pW1 = (tW - W2) // 2 if W2 < tW else 0
+    pW2 = tW - W2 - pW1 if W2 < tW else 0
+
+    if pD1 or pD2 or pH1 or pH2 or pW1 or pW2:
+        arr = np.pad(arr,
+                     ((0, 0), (pD1, pD2), (pH1, pH2), (pW1, pW2)),
+                     mode="constant", constant_values=0)
+    return arr
+
+class ROIWrapper(Dataset):
+    def __init__(self, base, roi=ROI_TGT):
         self.base = base
-        self.xform = xform
+        self.roi = roi
+
     def __len__(self):
         return len(self.base)
+
     def __getitem__(self, i):
         item = self.base[i]
-        return self.xform(item)
+        data = item["data"]
+        seg  = item["seg"]
 
+        if data.ndim == 3:
+            data = data[None, ...]
+        if seg.ndim == 3:
+            seg = seg[None, ...]
+
+        if isinstance(data, torch.Tensor):
+            data = data.cpu().numpy()
+        if isinstance(seg, torch.Tensor):
+            seg = seg.cpu().numpy()
+
+        data = crop_pad_center(data, self.roi)
+        seg  = crop_pad_center(seg,  self.roi)
+        data = torch.from_numpy(data).float()
+        seg  = torch.from_numpy(seg).long()
+
+        return {"data": data, "seg": seg}
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--exp_name", default="colorectal")
@@ -189,27 +239,6 @@ if __name__ == "__main__":
     )
 
     train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
-    
-    ROI = tuple(roi_size)
-
-    train_xform = Compose([
-        # Garantiza (C,D,H,W) tanto en data como en seg (si vienen (D,H,W), agrega canal)
-        EnsureChannelFirstd(keys=["data", "seg"]),
-    
-        # Si es más grande que el ROI: recorte aleatorio; si es más chico, no falla
-        RandSpatialCropd(keys=["data", "seg"], roi_size=ROI, random_center=True, random_size=False),
-    
-        # Si quedó más chico en alguna dimensión: padding hasta ROI
-        SpatialPadd(keys=["data", "seg"], spatial_size=ROI),
-    ])
-    
-    val_xform = Compose([
-        EnsureChannelFirstd(keys=["data", "seg"]),
-        CenterSpatialCropd(keys=["data", "seg"], roi_size=ROI),
-        SpatialPadd(keys=["data", "seg"], spatial_size=ROI),
-    ])
-    
-    train_ds = TransformWrapper(train_ds, train_xform)
-    val_ds   = TransformWrapper(val_ds,   val_xform)
-    
+    train_ds = ROIWrapper(train_ds, roi=ROI_TGT)
+    val_ds   = ROIWrapper(val_ds,   roi=ROI_TGT)
     trainer.train(train_dataset=train_ds, val_dataset=val_ds)
