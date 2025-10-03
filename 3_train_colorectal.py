@@ -9,6 +9,26 @@ from light_training.trainer import Trainer
 from light_training.evaluation.metric import dice
 from light_training.dataloading.dataset import get_train_val_test_loader_from_train
 from light_training.utils.files_helper import save_new_model_and_delete_last
+import torch
+
+try:
+    if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+        def autocast_fp16():
+            return torch.amp.autocast("cuda", dtype=torch.float16)
+    else:
+        raise AttributeError
+except Exception:
+    from torch.cuda.amp import autocast as _autocast_old
+    def autocast_fp16():
+        return _autocast_old(dtype=torch.float16)
+        
+if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+    def GradScalerCompat():
+        return torch.amp.GradScaler("cuda")
+else:
+    def GradScalerCompat():
+        return torch.cuda.amp.GradScaler()
+
 
 def autocast_fp16():
     if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
@@ -44,7 +64,7 @@ class ColorectalVesselsTrainer(Trainer):
 
         self.window_infer = SlidingWindowInferer(roi_size=ROI_SIZE, sw_batch_size=SW_BATCH_SIZE, overlap=0.5)
         self.augmentation = AUGMENTATION
-
+        self.scaler = GradScalerCompat()
         # === Modelo ===
         from model_segmamba.segmamba import SegMamba
         self.model = SegMamba(
