@@ -14,6 +14,8 @@ from torch.utils.data import Dataset
 set_determinism(123)
 import os
 import argparse
+import logging, sys
+from torch.cuda.amp import autocast
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--exp_name", default="colorectal")
@@ -28,18 +30,52 @@ EXP_NAME = args.exp_name
 data_dir = args.data_dir
 logdir = f"./logs/{EXP_NAME}"
 model_save_path = args.save_dir or os.path.join("./ckpts_seg", EXP_NAME, "model")
-
 os.makedirs(logdir, exist_ok=True)
 os.makedirs(model_save_path, exist_ok=True)
+
+LOGFILE = os.path.join(logdir, "trainer_log.txt")
+class _StreamToLogger(object):
+    def __init__(self, logger, level):
+        self.logger = logger
+        self.level = level
+        self._buffer = ""
+
+    def write(self, message):
+        if message and message != "\n":
+            for line in message.rstrip().splitlines():
+                self.logger.log(self.level, line.rstrip())
+
+    def flush(self):
+        pass
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOGFILE, mode="w"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+
+sys.stdout = _StreamToLogger(logging.getLogger("STDOUT"), logging.INFO)
+sys.stderr = _StreamToLogger(logging.getLogger("STDERR"), logging.ERROR)
+
+logging.info(f"EXP_NAME={EXP_NAME}")
+logging.info(f"data_dir={data_dir}")
+logging.info(f"model_save_path={model_save_path}")
+
 augmentation = True
 
 env = "pytorch"
-max_epoch = 300
-batch_size = 2
+max_epoch = args.epochs
+batch_size = args.batch_size
 val_every = 5
-num_gpus = 2
-device = "cuda:0"
+num_gpus = torch.cuda.device_count()
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
 roi_size = [128, 128, 128]
+logging.info(f"device={device} | num_gpus={num_gpus} | epochs={max_epoch} | batch_size={batch_size} | sw_batch_size={args.sw_batch_size}")
+
 
 class ColorectalVesselsTrainer(Trainer):
     def __init__(self, env_type, max_epochs, batch_size, device="cpu", val_every=5, num_gpus=2,
@@ -47,7 +83,7 @@ class ColorectalVesselsTrainer(Trainer):
         super().__init__(env_type, max_epochs, batch_size, device, val_every, num_gpus,
                          logdir, master_ip, master_port, training_script)
 
-        self.window_infer = SlidingWindowInferer(roi_size=roi_size, sw_batch_size=1, overlap=0.5)
+        self.window_infer = SlidingWindowInferer(roi_size=roi_size, sw_batch_size=args.sw_batch_size, overlap=0.5)
         self.augmentation = augmentation
 
         # === cambio mínimo: 1 canal de entrada, 2 clases (fondo, vena) ===
@@ -63,21 +99,16 @@ class ColorectalVesselsTrainer(Trainer):
                      
         self.patch_size = roi_size
         self.best_mean_dice = 0.0
-
-        # mismas elecciones que el original
         self.optimizer = torch.optim.SGD(
             self.model.parameters(), lr=1e-2, weight_decay=3e-5, momentum=0.99, nesterov=True
         )
         self.scheduler_type = "poly"
-
-        # === pérdida: CE como en el original (mismo espíritu del paper) ===
         self.cross = nn.CrossEntropyLoss()
 
     def get_input(self, batch):
-        # Mantener las mismas claves del dataloader original
-        image = batch["data"]   # (B, 1, D, H, W)
-        label = batch["seg"]    # (B, 1, D, H, W) con {0=fondo, 1=vena}
-        label = label[:, 0].long()  # CE espera (B, D, H, W) con enteros
+        image = batch["data"] 
+        label = batch["seg"]
+        label = label[:, 0].long()
         return image, label
 
     def training_step(self, batch):
@@ -88,7 +119,6 @@ class ColorectalVesselsTrainer(Trainer):
         return loss
 
     def cal_metric(self, gt, pred):
-        # gt/pred booleanos o {0,1}; devolvemos Dice del canal "vena"
         if pred.sum() > 0 and gt.sum() > 0:
             d = dice(pred, gt)
             return np.array([d, 50])
@@ -173,7 +203,7 @@ class ColorectalVesselsTrainer(Trainer):
                 os.path.join(model_save_path, f"tmp_model_ep{self.epoch}_{mean_dice:.4f}.pt")
             )
     
-        print(f"[val] dice_vena={mean_dice:.4f} | mean_dice={mean_dice:.4f}")
+        logging.info(f"[val] dice_vena={mean_dice:.4f} | mean_dice={mean_dice:.4f}")
 
 
 if __name__ == "__main__":
@@ -188,6 +218,7 @@ if __name__ == "__main__":
         master_port=17759,
         training_script=__file__
     )
-
+    logging.info("Datasets cargados. Iniciando entrenamiento...")
     train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
     trainer.train(train_dataset=train_ds, val_dataset=val_ds)
+    logging.info("Entrenamiento finalizado.")
