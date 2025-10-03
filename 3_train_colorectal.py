@@ -21,7 +21,7 @@ DATA_DIR = "/home/trawlins/tesis/data/colorectal/fullres/colorectal"
 LOG_DIR = "/home/trawlins/tesis/logs/colorectal"
 MODEL_SAVE_DIR = "/home/trawlins/tesis/ckpts_seg/colorectal/model"
 
-MAX_EPOCHS = 200
+MAX_EPOCHS = 300
 BATCH_SIZE = 2
 VAL_EVERY = 5
 NUM_GPUS = 1
