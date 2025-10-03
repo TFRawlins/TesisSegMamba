@@ -34,8 +34,8 @@ os.makedirs(model_save_path, exist_ok=True)
 augmentation = True
 
 env = "pytorch"
-max_epoch = 250
-batch_size = 4
+max_epoch = 200
+batch_size = 2
 val_every = 5
 num_gpus = 2
 device = "cuda:0"
@@ -47,7 +47,7 @@ class ColorectalVesselsTrainer(Trainer):
         super().__init__(env_type, max_epochs, batch_size, device, val_every, num_gpus,
                          logdir, master_ip, master_port, training_script)
 
-        self.window_infer = SlidingWindowInferer(roi_size=roi_size, sw_batch_size=2, overlap=0.5)
+        self.window_infer = SlidingWindowInferer(roi_size=roi_size, sw_batch_size=1, overlap=0.5)
         self.augmentation = augmentation
 
         # === cambio mínimo: 1 canal de entrada, 2 clases (fondo, vena) ===
