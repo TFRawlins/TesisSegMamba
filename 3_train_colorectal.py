@@ -22,12 +22,12 @@ LOG_DIR = "/home/trawlins/tesis/logs/colorectal"
 MODEL_SAVE_DIR = "/home/trawlins/tesis/ckpts_seg/colorectal/model"
 
 MAX_EPOCHS = 200
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 VAL_EVERY = 5
 NUM_GPUS = 1
 DEVICE = "cuda:0"
 ROI_SIZE = [128, 128, 128]
-SW_BATCH_SIZE = 2
+SW_BATCH_SIZE = 1
 AUGMENTATION = True
 
 # ---------- PREP ----------
