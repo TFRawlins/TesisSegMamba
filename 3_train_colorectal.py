@@ -20,12 +20,12 @@ MODEL_SAVE_DIR = "/home/trawlins/tesis/ckpts_seg/colorectal/model"
 
 # HYPERPARAMS
 MAX_EPOCHS = 200
-BATCH_SIZE = 8
+BATCH_SIZE = 6
 VAL_EVERY = 5
 NUM_GPUS = 1
 DEVICE = "cuda:0"
 ROI_SIZE = [128, 128, 128]
-SW_BATCH_SIZE = 4
+SW_BATCH_SIZE = 3
 AUGMENTATION = True
 
 # ---------- PREP ----------
