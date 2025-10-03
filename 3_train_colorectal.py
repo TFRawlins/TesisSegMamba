@@ -10,15 +10,17 @@ from light_training.evaluation.metric import dice
 from light_training.dataloading.dataset import get_train_val_test_loader_from_train
 from light_training.utils.files_helper import save_new_model_and_delete_last
 
-# ---------- CONFIG FIJA (sin argumentos) ----------
-EXP_NAME = "colorectal"
+def autocast_fp16():
+    if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+        return torch.amp.autocast("cuda", dtype=torch.float16)
+    else:
+        return torch.cuda.amp.autocast(dtype=torch.float16)
 
-# RUTAS ABSOLUTAS QUE USAS TÚ
+EXP_NAME = "colorectal"
 DATA_DIR = "/home/trawlins/tesis/data/colorectal/fullres/colorectal"
 LOG_DIR = "/home/trawlins/tesis/logs/colorectal"
 MODEL_SAVE_DIR = "/home/trawlins/tesis/ckpts_seg/colorectal/model"
 
-# HYPERPARAMS
 MAX_EPOCHS = 200
 BATCH_SIZE = 6
 VAL_EVERY = 5
