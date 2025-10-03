@@ -77,8 +77,8 @@ class ColorectalVesselsTrainer(Trainer):
         image, label = image.to(self.device), label.to(self.device)
 
         self.optimizer.zero_grad(set_to_none=True)
-        with autocast(device_type="cuda", dtype=torch.float16):
-            logits = self.model(image)          # (B, 2, D, H, W)
+        with autocast_fp16():
+            logits = self.model(image)
             loss = self.cross(logits, label)
 
         self.scaler.scale(loss).backward()
