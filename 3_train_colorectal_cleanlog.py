@@ -139,6 +139,7 @@ class ColorectalVesselsTrainer(Trainer):
         self.scaler.step(self.optimizer)
         self.scaler.update()
         # self.log("training_loss", loss.detach(), step=self.global_step)
+        logging.info(f"[train] epoch={self.epoch + 1} step={self.global_step + 1} loss={loss.item():.5f} lr={curr_lr:.6f}")
         return loss.detach()
 
     def validation_step(self, batch):
