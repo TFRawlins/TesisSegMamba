@@ -58,8 +58,8 @@ logging.basicConfig(
     ],
 )
 
-sys.stdout = _StreamToLogger(logging.getLogger("STDOUT"), logging.INFO)
-sys.stderr = _StreamToLogger(logging.getLogger("STDERR"), logging.ERROR)
+#sys.stdout = _StreamToLogger(logging.getLogger("STDOUT"), logging.INFO)
+#sys.stderr = _StreamToLogger(logging.getLogger("STDERR"), logging.ERROR)
 
 logging.info(f"EXP_NAME={EXP_NAME}")
 logging.info(f"data_dir={data_dir}")
