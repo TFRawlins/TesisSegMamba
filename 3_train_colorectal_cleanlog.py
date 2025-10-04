@@ -55,13 +55,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(os.path.join(logdir, "trainer_log.txt"), mode="w"),
-        logging.StreamHandler(sys.stdout)
-    ],
-)s [%(levelname)s] %(message)s",
-    handlers=[
         logging.FileHandler(LOGFILE, mode="w"),
-        logging.StreamHandler(sys.stdout),
+        logging.StreamHandler(sys.stdout),  # mantiene la consola activa
     ],
 )
 
