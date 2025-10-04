@@ -186,7 +186,7 @@ class ColorectalVesselsTrainer(Trainer):
             self.best_mean_dice = mean_dice
             save_new_model_and_delete_last(
                 self.model,
-                os.path.join(model_save_path, f"best_model_{mean_dice:.4f}.pt"),
+                os.path.join(model_save_path, f"best_model.pt"),
                 delete_symbol="best_model"
             )
     
