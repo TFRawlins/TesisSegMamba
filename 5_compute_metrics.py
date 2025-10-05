@@ -62,7 +62,7 @@ resizer = Resize(spatial_size=resize_to, mode="nearest")
 
 if __name__ == "__main__":
     pred_dir = "/home/trawlins/tesis/prediction_results/segmamba"
-    data_dir = "/home/trawlins/tesis/data/fullres/train"
+    data_dir = "/home/trawlins/tesis/data/colorectal/fullres/colorectal"
     metrics_dir = "/home/trawlins/tesis/prediction_results/result_metrics"
     os.makedirs(metrics_dir, exist_ok=True)
 
