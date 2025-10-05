@@ -121,8 +121,9 @@ def main():
             continue
 
         pred = load_pred_nii(pred_path)  # (D,H,W) uint8
-        gt = _to_3d(gt, "gt", case_id)
-        pred = _to_3d(pred, "pred", case_id)
+        gt = _to_3d(gt, "gt", case)
+        pred = _to_3d(pred, "pred", case)
+
         if gt is None or pred is None:
             # salta este caso y continúa el loop
             continue
