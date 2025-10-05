@@ -54,6 +54,12 @@ class ColorectalPredict(Trainer):
             sd = sd["module"]
         sd = { (k[7:] if k.startswith("module.") else k): v for k, v in sd.items() }
         model.load_state_dict(sd, strict=False)
+        res = model.load_state_dict(sd, strict=False)
+        print(f"[CKPT] missing={len(res.missing_keys)} unexpected={len(res.unexpected_keys)}")
+        if len(res.missing_keys) < 15:  # imprime algunas para inspección rápida
+            print("[CKPT] missing keys sample:", res.missing_keys[:10])
+        if len(res.unexpected_keys) < 15:
+            print("[CKPT] unexpected keys sample:", res.unexpected_keys[:10])
         model.eval()
 
         inferer = SlidingWindowInferer(
@@ -78,6 +84,9 @@ class ColorectalPredict(Trainer):
         model.to(args.device)
     
         # ===== 1) Forward (SW) =====
+        x = image.float()
+        print("[INPUT] shape:", tuple(x.shape),
+              "min:", float(x.min()), "max:", float(x.max()), "mean:", float(x.mean()), "std:", float(x.std()))
         with torch.amp.autocast("cuda", enabled=True):
             logits_sw = predictor.maybe_mirror_and_predict(image, model, device=args.device)  # [B,C,Ds,Hs,Ws] o [C,Ds,Hs,Ws]
         if logits_sw.dim() == 4:
@@ -95,7 +104,11 @@ class ColorectalPredict(Trainer):
                 logits_roi, size=target_shape, mode="trilinear", align_corners=False
             )  # [1,C,192,192,192]
     
-        probs_roi = torch.softmax(logits_roi, dim=1)   # [1,C,192,192,192]
+        probs_roi = torch.softmax(logits_roi, dim=1)
+        p = probs_roi[0]  # [C,192,192,192]
+        print("[PROBS] per-class mean:",
+              [float(p[c].mean()) for c in range(p.shape[0])],
+              "max:", float(p.max()), "min:", float(p.min()))
         pred_roi  = probs_roi.argmax(dim=1)            # [1,192,192,192]
     
         # ===== 3) Métrica en ROI (como training) =====
