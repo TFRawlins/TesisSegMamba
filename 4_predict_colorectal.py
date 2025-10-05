@@ -122,7 +122,8 @@ class ColorectalPredict(Trainer):
     
         # ===== 3) Métrica en ROI (como training) =====
         if label is not None:
-            gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
+            gt_roi_raw = label[0, 0].detach().cpu().numpy().astype(np.uint8)
+            gt_roi = (gt_roi_raw == 1).astype(np.uint8)
             pr_roi = pred_roi[0].detach().cpu().numpy().astype(np.uint8)
             gt_vals, gt_counts = np.unique(gt_roi, return_counts=True)
             pr_vals, pr_counts = np.unique(pr_roi, return_counts=True)
