@@ -77,7 +77,7 @@ class ColorectalPredict(Trainer):
 
         model.to(args.device)
     
-        with torch.cuda.amp.autocast(enabled=True):
+        with torch.amp.autocast("cuda", enabled=True):
             logits = predictor.maybe_mirror_and_predict(image, model, device=args.device)
             probs = predictor.predict_raw_probability(logits, properties=properties)
         pred_roi = probs.argmax(dim=0, keepdim=True)
@@ -90,13 +90,15 @@ class ColorectalPredict(Trainer):
                 pr_roi = pr_t.squeeze().byte().numpy()
             print(f"[ROI] Dice clase 1: {dice(pr_roi, gt_roi):.4f}")
     
-        pred_onehot = F.one_hot(pred_roi.long().squeeze(0), num_classes=2) \
-                        .permute(3, 0, 1, 2).float()
-    
-        fullres_onehot = predictor.predict_noncrop_probability(
-            pred_onehot, properties
-        )
+        pred_onehot = F.one_hot(pred_roi.long().squeeze(0), num_classes=2).permute(3, 0, 1, 2).float()
+        fullres_onehot = predictor.predict_noncrop_probability(pred_onehot, properties)
         fullres_label = fullres_onehot.argmax(dim=0, keepdim=True)
+        if isinstance(fullres_onehot, torch.Tensor):
+            fullres_label = fullres_onehot.argmax(dim=0, keepdim=True)
+        else:
+            import numpy as np
+            fullres_label = np.argmax(fullres_onehot, axis=0, keepdims=True) 
+            fullres_label = torch.from_numpy(fullres_label)
         predictor.save_to_nii(
             fullres_label,
             raw_spacing=[1, 1, 1],
