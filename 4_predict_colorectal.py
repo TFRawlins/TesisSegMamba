@@ -124,8 +124,20 @@ class ColorectalPredict(Trainer):
         if label is not None:
             gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
             pr_roi = pred_roi[0].detach().cpu().numpy().astype(np.uint8)
-    
-            # Dice de fondo (útil para confirmar sesgo a 0)
+            gt_vals, gt_counts = np.unique(gt_roi, return_counts=True)
+            pr_vals, pr_counts = np.unique(pr_roi, return_counts=True)
+            print("[UNIQUE] GT:", dict(zip(gt_vals.tolist(), gt_counts.tolist())),
+                  "PR:", dict(zip(pr_vals.tolist(), pr_counts.tolist())))
+            
+            tp = int(np.logical_and(pr_roi == 1, gt_roi == 1).sum())
+            fp = int(np.logical_and(pr_roi == 1, gt_roi == 0).sum())
+            fn = int(np.logical_and(pr_roi == 0, gt_roi == 1).sum())
+            den = (2*tp + fp + fn)
+            dice_manual = (2*tp / den) if den > 0 else 1.0
+            print(f"[MANUAL] TP={tp} FP={fp} FN={fn}  Dice={dice_manual:.4f}")
+            fg_probs = probs_roi[0, 1].detach().cpu().numpy()[gt_roi == 1]
+            prop_gt_pos_over_05 = float((fg_probs > 0.5).mean()) if fg_probs.size else -1
+            print(f"[ROI] GT positives with p1>0.5: {prop_gt_pos_over_05:.3f}")
             dice_bg = dice(1 - pr_roi, 1 - gt_roi)
             print(f"[ROI] Dice background: {dice_bg:.4f}")
     
