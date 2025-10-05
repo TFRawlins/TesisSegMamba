@@ -13,12 +13,36 @@ from medpy import metric
 set_determinism(123)
 
 def load_itk(path):
+    import SimpleITK as sitk
     img = sitk.ReadImage(path)
-    arr = sitk.GetArrayFromImage(img)  # z,y,x
-    spacing = img.GetSpacing()         # x,y,z en ITK; ojo orden
-    # reordenamos a z,y,x para voxelspacing de medpy (voxelspacing=D,H,W)
-    voxelspacing_zyx = (spacing[2], spacing[1], spacing[0])
-    return arr, voxelspacing_zyx
+    arr = sitk.GetArrayFromImage(img)  # SimpleITK: array en (Z,Y,X) o (T,Z,Y,X)
+
+    # Asegurar que quede en 3D (Z,Y,X)
+    if arr.ndim == 4:
+        # casos: (T,Z,Y,X) o (C,Z,Y,X). Si T/C==1, squeeze; si no, toma el primer canal/tiempo.
+        if arr.shape[0] == 1:
+            arr = arr[0]
+        else:
+            # Si guardaste one-hot/probas en canales, normalmente querrás argmax antes de guardar.
+            # Aquí tomamos el canal 0 por robustez:
+            arr = arr[0]
+    elif arr.ndim == 2:
+        # Imagen 2D → empaqueta una dimensión Z ficticia
+        arr = arr[None, :, :]
+
+    # Spacing puede tener longitud != 3 en algunos NIfTI “minimalistas”
+    spacing = img.GetSpacing()  # ITK: (sx, sy, sz) para 3D; puede ser de largo 0/1/2/4
+    if len(spacing) >= 3:
+        voxelspacing_zyx = (float(spacing[2]), float(spacing[1]), float(spacing[0]))
+    elif len(spacing) == 2:
+        voxelspacing_zyx = (1.0, float(spacing[1]), float(spacing[0]))
+    elif len(spacing) == 1:
+        voxelspacing_zyx = (float(spacing[0]), float(spacing[0]), float(spacing[0]))
+    else:
+        voxelspacing_zyx = (1.0, 1.0, 1.0)  # fallback razonable
+
+    return arr.astype(np.uint8), voxelspacing_zyx
+
 
 def to_numpy_uint8(x):
     if isinstance(x, torch.Tensor):
