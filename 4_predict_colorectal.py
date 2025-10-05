@@ -79,8 +79,17 @@ class ColorectalPredict(Trainer):
         # 1) Pred en ROI
         with torch.amp.autocast("cuda", enabled=True):
             logits = predictor.maybe_mirror_and_predict(image, model, device=args.device)
-            probs = predictor.predict_raw_probability(logits, properties=properties)
-    
+        if label is not None:
+            target_shape = tuple(label.shape[-3:])
+            if logits.shape[-3:] != target_shape:
+                import torch.nn.functional as F
+                logits = F.interpolate(
+                    logits.unsqueeze(0),  # [1,C,D,H,W]
+                    size=target_shape,
+                    mode="trilinear",
+                    align_corners=False,
+                ).squeeze(0)
+        probs = torch.softmax(logits, dim=0)
         # 2) Argmax (clase única) en ROI
         pred_roi = probs.argmax(dim=0, keepdim=True)  # [1,D,H,W] con {0,1}
         print("ROI shapes -> probs:", tuple(probs.shape),
@@ -92,7 +101,9 @@ class ColorectalPredict(Trainer):
         if label is not None:
             gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
             pr_roi = pred_roi[0].detach().cpu().numpy().astype(np.uint8)
+            # Ya no debería hacer falta re-ajustar forma, pero por si acaso:
             if pr_roi.shape != gt_roi.shape:
+                import torch.nn.functional as F
                 pr_t = torch.from_numpy(pr_roi)[None, None].float()
                 pr_t = F.interpolate(pr_t, size=gt_roi.shape, mode="nearest")
                 pr_roi = pr_t.squeeze().byte().numpy()
