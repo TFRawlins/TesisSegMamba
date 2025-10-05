@@ -70,17 +70,21 @@ class ColorectalPredict(Trainer):
 
     @torch.no_grad()
     def validation_step(self, batch):
-        import torch.nn.functional as F
+        import torch.nn.functional as F  # OK aquí; no re-importes numpy
     
         image, label, properties = self.get_input(batch)
         model, predictor = self.define_model()
-
         model.to(args.device)
     
+        # 1) Pred en ROI
         with torch.amp.autocast("cuda", enabled=True):
             logits = predictor.maybe_mirror_and_predict(image, model, device=args.device)
             probs = predictor.predict_raw_probability(logits, properties=properties)
-        pred_roi = probs.argmax(dim=0, keepdim=True)
+    
+        # 2) Argmax (clase única) en ROI
+        pred_roi = probs.argmax(dim=0, keepdim=True)  # [1,D,H,W] con {0,1}
+    
+        # 3) Dice en ROI (si hay GT)
         if label is not None:
             gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
             pr_roi = pred_roi[0].detach().cpu().numpy().astype(np.uint8)
@@ -90,23 +94,31 @@ class ColorectalPredict(Trainer):
                 pr_roi = pr_t.squeeze().byte().numpy()
             print(f"[ROI] Dice clase 1: {dice(pr_roi, gt_roi):.4f}")
     
-        pred_onehot = F.one_hot(pred_roi.long().squeeze(0), num_classes=2).permute(3, 0, 1, 2).float()
+        # 4) NON-CROP en 2 canales (one-hot)
+        pred_onehot = F.one_hot(
+            pred_roi.long().squeeze(0), num_classes=2
+        ).permute(3, 0, 1, 2).float()  # [2,D,H,W]
+    
         fullres_onehot = predictor.predict_noncrop_probability(pred_onehot, properties)
-        fullres_label = fullres_onehot.argmax(dim=0, keepdim=True)
+    
+        # 5) Argmax full-res (torch o numpy)
         if isinstance(fullres_onehot, torch.Tensor):
-            fullres_label = fullres_onehot.argmax(dim=0, keepdim=True)
+            fullres_label = fullres_onehot.argmax(dim=0, keepdim=True)  # [1,Z,Y,X]
         else:
-            import numpy as np
-            fullres_label = np.argmax(fullres_onehot, axis=0, keepdims=True) 
+            # ¡NO re-importes numpy dentro de la función! ya está en el global
+            fullres_label = np.argmax(fullres_onehot, axis=0, keepdims=True)  # [1,Z,Y,X]
             fullres_label = torch.from_numpy(fullres_label)
+    
+        # 6) Guardar NIfTI
         predictor.save_to_nii(
             fullres_label,
-            raw_spacing=[1, 1, 1],
+            raw_spacing=[1, 1, 1],  # si tienes spacing real en properties, úsalo aquí
             case_name=properties["name"][0],
             save_dir=args.save_dir,
         )
     
         return 0
+
 
 if __name__ == "__main__":
     trainer = ColorectalPredict(device=args.device)
