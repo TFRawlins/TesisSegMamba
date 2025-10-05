@@ -50,13 +50,47 @@ def to_numpy_uint8(x):
     return x.astype(np.uint8)
 
 def ensure_same_shape(pred_np, gt_np):
+    import torch
+    import torch.nn.functional as F
+    import numpy as np
+
+    def to_3d(arr):
+        arr = np.asarray(arr)
+        if arr.ndim == 2:
+            # (H,W) -> (1,H,W)
+            arr = arr[None, ...]
+        elif arr.ndim == 3:
+            # (D,H,W) ok
+            pass
+        elif arr.ndim == 4:
+            if arr.shape[0] <= arr.shape[-1]:
+                if arr.shape[0] > 1:
+                    arr = np.argmax(arr, axis=0)
+                else:
+                    arr = arr[0]
+            else:
+                if arr.shape[-1] > 1:
+                    arr = np.argmax(arr, axis=-1)
+                else:
+                    arr = arr[..., 0]
+
+            if arr.ndim == 2:
+                arr = arr[None, ...]
+        else:
+            raise ValueError(f"Arreglo con ndim no soportado: {arr.ndim}")
+        return arr.astype(np.uint8)
+
+    pred_np = to_3d(pred_np)
+    gt_np   = to_3d(gt_np)
+
     if pred_np.shape == gt_np.shape:
         return pred_np, gt_np
-    # re-muestrea GT a la forma del pred (nearest para máscaras)
-    gt_t = torch.from_numpy(gt_np)[None, None].float()  # [1,1,D,H,W]
+
+    gt_t = torch.from_numpy(gt_np)[None, None].float()
     gt_t = F.interpolate(gt_t, size=pred_np.shape, mode="nearest")
-    gt_np2 = gt_t.squeeze().byte().numpy()
+    gt_np2 = gt_t.squeeze(0).squeeze(0).byte().numpy()
     return pred_np, gt_np2
+
 
 def cal_metric_binary(gt, pred, voxel_spacing):
     # gt/pred: (D,H,W) con {0,1}
@@ -116,13 +150,28 @@ def main():
             gt_np, gt_vox = load_itk(gt_path)
             gt_voxspacing = gt_vox
         else:
-            # usamos el GT del batch (más simple y consistente)
-            gt_t = batch["seg"][0, 0]  # (B,1,D,H,W) → (D,H,W)
+            gt_t = batch["seg"][0, 0]
             gt_np = to_numpy_uint8(gt_t)
-            # usamos el spacing del pred (suficiente para HD)
             gt_voxspacing = pred_vox
 
-        # Asegurar misma forma
+        if pred_np.ndim > 3:
+            if pred_np.shape[0] > 1:
+                pred_np = np.argmax(pred_np, axis=0)
+            else:
+                pred_np = np.squeeze(pred_np, axis=0)
+        elif pred_np.ndim == 2:
+            pred_np = pred_np[None, :, :]
+        
+        pred_np = (pred_np > 0).astype(np.uint8)
+        if gt_np.ndim > 3:
+            if gt_np.shape[0] > 1:
+                gt_np = np.argmax(gt_np, axis=0)
+            else:
+                gt_np = np.squeeze(gt_np, axis=0)
+        elif gt_np.ndim == 2:
+            gt_np = gt_np[None, :, :]
+        
+        gt_np = (gt_np > 0).astype(np.uint8)
         pred_np, gt_np = ensure_same_shape(pred_np, gt_np)
 
         # Métricas binario
