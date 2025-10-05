@@ -77,17 +77,16 @@ class ColorectalPredict(Trainer):
         model, predictor = self.define_model()
         model.to(args.device)
     
-        # ===== 1) Forward con sliding-window (espacio SW) =====
+        # ===== 1) Forward (SW) =====
         with torch.amp.autocast("cuda", enabled=True):
             logits_sw = predictor.maybe_mirror_and_predict(image, model, device=args.device)  # [B,C,Ds,Hs,Ws] o [C,Ds,Hs,Ws]
         if logits_sw.dim() == 4:
             logits_sw = logits_sw.unsqueeze(0)  # -> [1,C,Ds,Hs,Ws]
     
-        # ===== 2) Llevar a ROI (192^3) para métrica y non-crop =====
+        # ===== 2) Llevar a ROI (192^3) para métrica y guardado =====
         if label is not None:
             target_shape = tuple(label.shape[-3:])  # (192,192,192)
         else:
-            # si no hay GT, asumimos 192^3 (ajusta si tu pipeline usa otra ROI)
             target_shape = (192, 192, 192)
     
         logits_roi = logits_sw
@@ -99,12 +98,11 @@ class ColorectalPredict(Trainer):
         probs_roi = torch.softmax(logits_roi, dim=1)   # [1,C,192,192,192]
         pred_roi  = probs_roi.argmax(dim=1)            # [1,192,192,192]
     
-        # ===== 3) Métrica en ROI (como en training) =====
+        # ===== 3) Métrica en ROI (como training) =====
         if label is not None:
             gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
             pr_roi = pred_roi[0].detach().cpu().numpy().astype(np.uint8)
-            # Deberían coincidir; fallback por seguridad:
-            if pr_roi.shape != gt_roi.shape:
+            if pr_roi.shape != gt_roi.shape:  # fallback de seguridad
                 pr_t = torch.from_numpy(pr_roi)[None, None].float()
                 pr_t = F.interpolate(pr_t, size=gt_roi.shape, mode="nearest")
                 pr_roi = pr_t.squeeze().byte().numpy()
@@ -115,30 +113,17 @@ class ColorectalPredict(Trainer):
             print("pos_pred:", int((pred_roi[0] > 0).sum()),
                   "pos_gt:", int((label[0,0] > 0).sum()))
     
-        # ===== 4) NON-CROP con mapas en ROI (C,192,192,192) =====
-        # El predictor espera probabilidades por clase en ROI.
-        probs_roi_np = probs_roi[0].detach().cpu().numpy().astype(np.float32)  # (C,192,192,192)
-        # (debug) verifica forma:
-        # print("Passing to non-crop:", probs_roi_np.shape)
-    
-        fullres_onehot = predictor.predict_noncrop_probability(probs_roi_np, properties)
-    
-        # ===== 5) Argmax full-res y guardar =====
-        if isinstance(fullres_onehot, torch.Tensor):
-            fullres_label = fullres_onehot.argmax(dim=0, keepdim=True).detach().cpu().numpy()  # [1,Z,Y,X]
-        else:
-            fullres_label = np.argmax(fullres_onehot, axis=0, keepdims=True)                   # [1,Z,Y,X]
-    
-        out_np = fullres_label[0].astype(np.uint8)  # [Z,Y,X]
-    
+        # ===== 4) Guardar NIfTI directamente en ROI (sin non-crop) =====
+        out_np = pred_roi[0].detach().cpu().numpy().astype(np.uint8)  # [192,192,192]
         predictor.save_to_nii(
             out_np,
-            raw_spacing=[1, 1, 1],  # si tienes spacing/origin/direction en properties, mejor usarlos aquí
+            raw_spacing=[1, 1, 1],  # si guardaste spacing/origin/direction reales en properties, mejor úsalos
             case_name=properties["name"][0],
             save_dir=args.save_dir,
         )
     
         return 0
+
 
 
 
