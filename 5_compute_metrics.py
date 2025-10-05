@@ -13,6 +13,27 @@ from light_training.evaluation.metric import dice as lt_dice  # la misma de tu v
 
 set_determinism(123)
 
+def _to_3d(arr: np.ndarray, name: str, case_id: str):
+    arr = np.asarray(arr)
+    # Casos típicos: (1,D,H,W) o (D,H,W) o (D,H,W,1) o (1,1,D,H,W)
+    if arr.ndim == 5 and arr.shape[0] == 1 and arr.shape[1] in (1, 2):
+        arr = arr[0, 0]  # -> (D,H,W)
+    elif arr.ndim == 4 and arr.shape[0] == 1:
+        arr = arr[0]     # -> (D,H,W) o (H,W,1)
+    elif arr.ndim == 4 and arr.shape[-1] == 1:
+        arr = arr[..., 0]  # -> (D,H,W)
+    # Si vino etiquetado con 255 como padding, llévalo a 0
+    if name == "gt":
+        arr = arr.astype(np.uint8)
+        arr[arr == 255] = 0
+        # binariza: asume 1 = foreground
+        arr = (arr == 1).astype(np.uint8)
+    # Verifica 3D
+    if arr.ndim != 3:
+        print(f"[SKIP] {case_id}: {name}.ndim={arr.ndim} forma={arr.shape} (esperado 3D). Se omite.")
+        return None
+    return arr
+
 def load_pred_nii(pred_path: str) -> np.ndarray:
     """Carga NIfTI y devuelve máscara binaria (D,H,W) uint8 en {0,1}."""
     nii = nib.load(pred_path)
@@ -100,7 +121,11 @@ def main():
             continue
 
         pred = load_pred_nii(pred_path)  # (D,H,W) uint8
-
+        gt = _to_3d(gt, "gt", case_id)
+        pred = _to_3d(pred, "pred", case_id)
+        if gt is None or pred is None:
+            # salta este caso y continúa el loop
+            continue
         # 3) Asegurar shapes (deberían ser 192³ ambos). Si difieren por 1–2 voxels, corrige con pad/crop seguro.
         if pred.shape != gt.shape:
             Dz, Dy, Dx = gt.shape
