@@ -83,14 +83,21 @@ class ColorectalPredict(Trainer):
         model, predictor = self.define_model()
         model.to(args.device)
     
+        # Identificador del caso
+        case_name = properties["name"][0] if isinstance(properties["name"], list) else str(properties["name"])
+        print(f"[CASE] {case_name}")
+    
         # ===== 1) Forward (SW) =====
         x = image.float()
         print("[INPUT] shape:", tuple(x.shape),
-              "min:", float(x.min()), "max:", float(x.max()), "mean:", float(x.mean()), "std:", float(x.std()))
+              "min:", float(x.min()), "max:", float(x.max()),
+              "mean:", float(x.mean()), "std:", float(x.std()))
         with torch.amp.autocast("cuda", enabled=True):
             logits_sw = predictor.maybe_mirror_and_predict(image, model, device=args.device)  # [B,C,Ds,Hs,Ws] o [C,Ds,Hs,Ws]
         if logits_sw.dim() == 4:
             logits_sw = logits_sw.unsqueeze(0)  # -> [1,C,Ds,Hs,Ws]
+    
+        print("[LOGITS_SW] shape:", tuple(logits_sw.shape))
     
         # ===== 2) Llevar a ROI (192^3) para métrica y guardado =====
         if label is not None:
@@ -104,21 +111,36 @@ class ColorectalPredict(Trainer):
                 logits_roi, size=target_shape, mode="trilinear", align_corners=False
             )  # [1,C,192,192,192]
     
+        print("[LOGITS_ROI] shape:", tuple(logits_roi.shape))
+    
         probs_roi = torch.softmax(logits_roi, dim=1)
         p = probs_roi[0]  # [C,192,192,192]
         print("[PROBS] per-class mean:",
               [float(p[c].mean()) for c in range(p.shape[0])],
               "max:", float(p.max()), "min:", float(p.min()))
-        pred_roi  = probs_roi.argmax(dim=1)            # [1,192,192,192]
+        pred_roi = probs_roi.argmax(dim=1)            # [1,192,192,192]
     
         # ===== 3) Métrica en ROI (como training) =====
         if label is not None:
             gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
             pr_roi = pred_roi[0].detach().cpu().numpy().astype(np.uint8)
-            if pr_roi.shape != gt_roi.shape:  # fallback de seguridad
+    
+            # Dice de fondo (útil para confirmar sesgo a 0)
+            dice_bg = dice(1 - pr_roi, 1 - gt_roi)
+            print(f"[ROI] Dice background: {dice_bg:.4f}")
+    
+            # Probabilidad de la clase 1 en voxeles positivos del GT
+            fg_probs = probs_roi[0, 1].detach().cpu().numpy()[gt_roi == 1]
+            print("[ROI] fg_prob mean/max on GT==1:",
+                  float(fg_probs.mean() if fg_probs.size else -1),
+                  float(fg_probs.max() if fg_probs.size else -1))
+    
+            # Fallback (no debería hacer falta)
+            if pr_roi.shape != gt_roi.shape:
                 pr_t = torch.from_numpy(pr_roi)[None, None].float()
                 pr_t = F.interpolate(pr_t, size=gt_roi.shape, mode="nearest")
                 pr_roi = pr_t.squeeze().byte().numpy()
+    
             print(f"[ROI] Dice clase 1: {dice(pr_roi, gt_roi):.4f}")
             print("ROI shapes -> probs:", tuple(probs_roi.shape),
                   "pred_roi:", tuple(pred_roi.shape),
@@ -131,7 +153,7 @@ class ColorectalPredict(Trainer):
         predictor.save_to_nii(
             out_np,
             raw_spacing=[1, 1, 1],  # si guardaste spacing/origin/direction reales en properties, mejor úsalos
-            case_name=properties["name"][0],
+            case_name=case_name,
             save_dir=args.save_dir,
         )
     
