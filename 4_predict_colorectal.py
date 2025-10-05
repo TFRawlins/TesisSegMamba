@@ -79,24 +79,19 @@ class ColorectalPredict(Trainer):
         # 1) Pred en ROI
         with torch.amp.autocast("cuda", enabled=True):
             logits = predictor.maybe_mirror_and_predict(image, model, device=args.device)
+        if logits.dim() == 4:   # [C,D,H,W] -> [1,C,D,H,W]
+            logits = logits.unsqueeze(0)
         if label is not None:
-            target_shape = tuple(label.shape[-3:])
-            if logits.shape[-3:] != target_shape:
+            target_shape = tuple(label.shape[-3:])            # (192,192,192)
+            if tuple(logits.shape[-3:]) != target_shape:
                 import torch.nn.functional as F
                 logits = F.interpolate(
-                    logits.unsqueeze(0),  # [1,C,D,H,W]
-                    size=target_shape,
-                    mode="trilinear",
-                    align_corners=False,
-                ).squeeze(0)
-        probs = torch.softmax(logits, dim=0)
+                    logits, size=target_shape, mode="trilinear", align_corners=False
+                )
+        probs = torch.softmax(logits, dim=1)
         # 2) Argmax (clase única) en ROI
-        pred_roi = probs.argmax(dim=0, keepdim=True)  # [1,D,H,W] con {0,1}
-        print("ROI shapes -> probs:", tuple(probs.shape),
-          "pred_roi:", tuple(pred_roi.shape),
-          "label:", None if label is None else tuple(label.shape))
-        print("pos_pred:", int((pred_roi[0] > 0).sum()),
-          "pos_gt:", None if label is None else int((label[0,0] > 0).sum()))
+        pred_roi = probs.argmax(dim=1, keepdim=False)
+        pred_roi = pred_roi[:1]
         # 3) Dice en ROI (si hay GT)
         if label is not None:
             gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
@@ -108,6 +103,11 @@ class ColorectalPredict(Trainer):
                 pr_t = F.interpolate(pr_t, size=gt_roi.shape, mode="nearest")
                 pr_roi = pr_t.squeeze().byte().numpy()
             print(f"[ROI] Dice clase 1: {dice(pr_roi, gt_roi):.4f}")
+        print("ROI shapes -> probs:", tuple(probs.shape),
+          "pred_roi:", tuple(pred_roi.shape),
+          "label:", None if label is None else tuple(label.shape))
+        print("pos_pred:", int((pred_roi[0] > 0).sum()),
+          "pos_gt:", None if label is None else int((label[0,0] > 0).sum()))
     
         pred_onehot = F.one_hot(
             pred_roi.long().squeeze(0), num_classes=2
