@@ -10,6 +10,19 @@ from medpy import metric
 import nibabel as nib
 from monai.transforms import Resize
 
+pred_path="/home/trawlins/tesis/prediction_results/segmamba/1109.nii.gz"
+arr=nib.load(pred_path).get_fdata()
+print("pred:", arr.shape, arr.min(), arr.max(), np.unique(arr, return_counts=True))
+data_dir="/home/trawlins/tesis/data/colorectal/fullres/colorectal"
+gt=np.load(os.path.join(data_dir,"1109_seg.npy"))
+if gt.ndim==4 and gt.shape[0]==1: gt=gt[0]
+gt[gt==255]=0
+gt=(gt==1).astype(np.uint8)
+print("gt:", gt.shape, gt.min(), gt.max(), np.unique(gt, return_counts=True))
+pred=(arr>0.5) if arr.max()<=1 else (arr>0)
+pred=pred.astype(bool)
+gt=gt.astype(bool)
+print("Dice:", metric.binary.dc(pred, gt))
 
 def cal_metric(gt_bool: np.ndarray, pred_bool: np.ndarray, voxel_spacing):
     """
