@@ -81,23 +81,29 @@ class ColorectalPredict(Trainer):
 
         pred_roi = probs.argmax(dim=0, keepdim=True)
 
-        if label is not None:
-            # label: (B,1,D,H,W) → (D,H,W)
-            gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
-            pr_roi = pred_roi[0].detach().cpu().numpy().astype(np.uint8)
-
-
-            if pr_roi.shape != gt_roi.shape:
-                pr_t = torch.from_numpy(pr_roi)[None, None].float()
-                pr_t = F.interpolate(pr_t, size=gt_roi.shape, mode="nearest")
-                pr_roi = pr_t.squeeze().byte().numpy()
-
-            print(f"[ROI] Dice clase 1: {dice(pr_roi, gt_roi):.4f}")
-
-        fullres = predictor.predict_noncrop_probability(pred_roi, properties)
+       if label is not None:
+        gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
+        pr_roi = pred_roi[0].detach().cpu().numpy().astype(np.uint8)
+        if pr_roi.shape != gt_roi.shape:
+            import torch.nn.functional as F
+            pr_t = torch.from_numpy(pr_roi)[None, None].float()
+            pr_t = F.interpolate(pr_t, size=gt_roi.shape, mode="nearest")
+            pr_roi = pr_t.squeeze().byte().numpy()
+        print(f"[ROI] Dice clase 1: {dice(pr_roi, gt_roi):.4f}")
+        
+        red_onehot = torch.nn.functional.one_hot(
+            pred_roi.long().squeeze(0), num_classes=2
+        ).permute(3, 0, 1, 2).float()  # [2,D,H,W]
+        
+        fullres_onehot = predictor.predict_noncrop_probability(pred_onehot, properties)  # [2, Z, Y, X] en espacio original
+        
+        # Argmax full-res para guardar máscara 3D clase única
+        fullres_label = fullres_onehot.argmax(dim=0, keepdim=True)  # [1, Z, Y, X]
+        
+        # Guarda NIfTI (si tienes spacing real en properties, úsalo en lugar de [1,1,1])
         predictor.save_to_nii(
-            fullres,
-            raw_spacing=[1,1,1],
+            fullres_label,
+            raw_spacing=[1, 1, 1],
             case_name=properties["name"][0],
             save_dir=args.save_dir,
         )
