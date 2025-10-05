@@ -94,25 +94,25 @@ class ColorectalPredict(Trainer):
                 pr_roi = pr_t.squeeze().byte().numpy()
             print(f"[ROI] Dice clase 1: {dice(pr_roi, gt_roi):.4f}")
     
-        # 4) NON-CROP en 2 canales (one-hot)
         pred_onehot = F.one_hot(
             pred_roi.long().squeeze(0), num_classes=2
-        ).permute(3, 0, 1, 2).float()  # [2,D,H,W]
-    
+        ).permute(3, 0, 1, 2).float()
+        
         fullres_onehot = predictor.predict_noncrop_probability(pred_onehot, properties)
-    
-        # 5) Argmax full-res (torch o numpy)
         if isinstance(fullres_onehot, torch.Tensor):
-            fullres_label = fullres_onehot.argmax(dim=0, keepdim=True)  # [1,Z,Y,X]
+            fullres_label = fullres_onehot.argmax(dim=0, keepdim=True) 
+            out_np = fullres_label.detach().cpu().numpy()
         else:
-            # ¡NO re-importes numpy dentro de la función! ya está en el global
-            fullres_label = np.argmax(fullres_onehot, axis=0, keepdims=True)  # [1,Z,Y,X]
-            fullres_label = torch.from_numpy(fullres_label)
-    
-        # 6) Guardar NIfTI
+            out_np = np.argmax(fullres_onehot, axis=0, keepdims=True)
+        
+        if out_np.ndim == 4 and out_np.shape[0] == 1:
+            out_np = out_np[0]
+        out_np = out_np.astype(np.uint8)
+        
+
         predictor.save_to_nii(
-            fullres_label,
-            raw_spacing=[1, 1, 1],  # si tienes spacing real en properties, úsalo aquí
+            out_np,
+            raw_spacing=[1, 1, 1],
             case_name=properties["name"][0],
             save_dir=args.save_dir,
         )
