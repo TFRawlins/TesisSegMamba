@@ -70,64 +70,74 @@ class ColorectalPredict(Trainer):
 
     @torch.no_grad()
     def validation_step(self, batch):
-        import torch.nn.functional as F  # OK aquí; no re-importes numpy
+        import torch.nn.functional as F
     
         image, label, properties = self.get_input(batch)
         model, predictor = self.define_model()
         model.to(args.device)
     
-        # 1) Pred en ROI
+        # ===== 1) Forward SW: logits con batch =====
         with torch.amp.autocast("cuda", enabled=True):
-            logits = predictor.maybe_mirror_and_predict(image, model, device=args.device)
-        if logits.dim() == 4:   # [C,D,H,W] -> [1,C,D,H,W]
-            logits = logits.unsqueeze(0)
+            # logits_sw: [B,C,Ds,Hs,Ws] en el espacio del sliding window (crop)
+            logits_sw = predictor.maybe_mirror_and_predict(image, model, device=args.device)
+    
+        # Normalizar a [1,C,*,*,*]
+        if logits_sw.dim() == 4:   # [C,D,H,W] -> [1,C,D,H,W]
+            logits_sw = logits_sw.unsqueeze(0)
+    
+        # ===== 2) Probs en espacio SW (para NON-CROP) =====
+        # NO re-escalar aquí: justo así es como lo espera predict_noncrop_probability
+        probs_sw = torch.softmax(logits_sw, dim=1)            # [1,C,Ds,Hs,Ws]
+        pred_sw  = probs_sw.argmax(dim=1, keepdim=False)      # [1,Ds,Hs,Ws]
+        # One-hot [2,Ds,Hs,Ws] para non-crop
+        pred_onehot_sw = F.one_hot(
+            pred_sw.long().squeeze(0), num_classes=2
+        ).permute(3, 0, 1, 2).float()                         # [2,Ds,Hs,Ws]
+    
+        # ===== 3) Métrica en ROI (192^3): re-escalar a la rejilla del label =====
         if label is not None:
             target_shape = tuple(label.shape[-3:])            # (192,192,192)
-            if tuple(logits.shape[-3:]) != target_shape:
-                import torch.nn.functional as F
-                logits = F.interpolate(
-                    logits, size=target_shape, mode="trilinear", align_corners=False
-                )
-        probs = torch.softmax(logits, dim=1)
-        # 2) Argmax (clase única) en ROI
-        pred_roi = probs.argmax(dim=1, keepdim=False)
-        pred_roi = pred_roi[:1]
-        # 3) Dice en ROI (si hay GT)
-        if label is not None:
+            logits_roi = logits_sw
+            if tuple(logits_roi.shape[-3:]) != target_shape:
+                logits_roi = F.interpolate(
+                    logits_roi, size=target_shape, mode="trilinear", align_corners=False
+                )                                             # [1,C,192,192,192]
+            probs_roi = torch.softmax(logits_roi, dim=1)      # [1,C,192,192,192]
+            pred_roi  = probs_roi.argmax(dim=1)               # [1,192,192,192]
+    
             gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
             pr_roi = pred_roi[0].detach().cpu().numpy().astype(np.uint8)
-            # Ya no debería hacer falta re-ajustar forma, pero por si acaso:
+            # (Por seguridad: deberían coincidir ya)
             if pr_roi.shape != gt_roi.shape:
-                import torch.nn.functional as F
                 pr_t = torch.from_numpy(pr_roi)[None, None].float()
                 pr_t = F.interpolate(pr_t, size=gt_roi.shape, mode="nearest")
                 pr_roi = pr_t.squeeze().byte().numpy()
-            print(f"[ROI] Dice clase 1: {dice(pr_roi, gt_roi):.4f}")
-        print("ROI shapes -> probs:", tuple(probs.shape),
-          "pred_roi:", tuple(pred_roi.shape),
-          "label:", None if label is None else tuple(label.shape))
-        print("pos_pred:", int((pred_roi[0] > 0).sum()),
-          "pos_gt:", None if label is None else int((label[0,0] > 0).sum()))
     
-        pred_onehot = F.one_hot(
-            pred_roi.long().squeeze(0), num_classes=2
-        ).permute(3, 0, 1, 2).float()
-        
-        fullres_onehot = predictor.predict_noncrop_probability(pred_onehot, properties)
-        if isinstance(fullres_onehot, torch.Tensor):
-            fullres_label = fullres_onehot.argmax(dim=0, keepdim=True) 
-            out_np = fullres_label.detach().cpu().numpy()
+            print(f"[ROI] Dice clase 1: {dice(pr_roi, gt_roi):.4f}")
+            # Debug útil
+            print("ROI shapes -> probs:", tuple(probs_roi.shape),
+                  "pred_roi:", tuple(pred_roi.shape),
+                  "label:", tuple(label.shape))
+            print("pos_pred:", int((pred_roi[0] > 0).sum()),
+                  "pos_gt:", int((label[0,0] > 0).sum()))
         else:
-            out_np = np.argmax(fullres_onehot, axis=0, keepdims=True)
-        
-        if out_np.ndim == 4 and out_np.shape[0] == 1:
-            out_np = out_np[0]
-        out_np = out_np.astype(np.uint8)
-        
-
+            # Si no hay GT, crea pred_roi desde SW re-escalado a 192^3 solo para consistencia (opcional)
+            pred_roi = None
+    
+        # ===== 4) NON-CROP en espacio SW (forma chica) =====
+        fullres_onehot = predictor.predict_noncrop_probability(pred_onehot_sw, properties)
+        # Argmax full-res y convertir a numpy para save_to_nii
+        if isinstance(fullres_onehot, torch.Tensor):
+            fullres_label = fullres_onehot.argmax(dim=0, keepdim=True).detach().cpu().numpy()  # [1,Z,Y,X]
+        else:
+            fullres_label = np.argmax(fullres_onehot, axis=0, keepdims=True)                   # [1,Z,Y,X]
+    
+        out_np = fullres_label[0].astype(np.uint8)  # [Z,Y,X]
+    
+        # ===== 5) Guardar NIfTI =====
         predictor.save_to_nii(
             out_np,
-            raw_spacing=[1, 1, 1],
+            raw_spacing=[1, 1, 1],  # si tienes spacing/origin/direction en properties, es mejor usarlos aquí
             case_name=properties["name"][0],
             save_dir=args.save_dir,
         )
