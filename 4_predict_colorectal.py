@@ -83,7 +83,11 @@ class ColorectalPredict(Trainer):
     
         # 2) Argmax (clase única) en ROI
         pred_roi = probs.argmax(dim=0, keepdim=True)  # [1,D,H,W] con {0,1}
-    
+        print("ROI shapes -> probs:", tuple(probs.shape),
+          "pred_roi:", tuple(pred_roi.shape),
+          "label:", None if label is None else tuple(label.shape))
+        print("pos_pred:", int((pred_roi[0] > 0).sum()),
+          "pos_gt:", None if label is None else int((label[0,0] > 0).sum()))
         # 3) Dice en ROI (si hay GT)
         if label is not None:
             gt_roi = label[0, 0].detach().cpu().numpy().astype(np.uint8)
