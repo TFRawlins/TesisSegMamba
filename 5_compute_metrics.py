@@ -12,52 +12,48 @@ from light_training.dataloading.dataset import get_train_val_test_loader_from_tr
 
 set_determinism(123)
 
+def _as_uint8_01(a):
+    a = a.astype(np.uint8, copy=False)
+    a[a == 255] = 0
+    a = (a == 1).astype(np.uint8, copy=False)
+    return a
 
-def to_3d_uint8(arr, name="arr", case=""):
-    """
-    Normaliza un array a (D,H,W) uint8 si es posible.
-    Elimina ejes de tamaño 1 por delante/atrás. Si no queda 3D, retorna None.
-    """
+def _ensure_3d(arr, name="", case=""):
+    """Devuelve (D,H,W) añadiendo una dimensión si viene 2D."""
     a = np.asarray(arr)
-    # Quitar dims de tamaño 1 hasta acercarnos a 3D
-    while a.ndim > 3 and (a.shape[0] == 1 or a.shape[-1] == 1):
-        if a.shape[0] == 1:
-            a = a[0]
-        elif a.shape[-1] == 1:
-            a = a[..., 0]
-        else:
-            break
-
-    if a.ndim != 3:
-        print(f"[SKIP] {case}: {name}.ndim={a.ndim} forma={a.shape} (esperado 3D). Se omite.")
+    if a.ndim == 5:        # (B,C,D,H,W)
+        a = a[0, 0]
+    elif a.ndim == 4:      # (B,D,H,W) o (C,D,H,W) con C=1
+        a = a[0]
+    elif a.ndim == 3:      # (D,H,W)
+        pass
+    elif a.ndim == 2:      # (H,W) -> (1,H,W)
+        a = a[None, ...]
+        print(f"[WARN] {case}: {name} venía 2D {arr.shape}, se asume D=1 -> {a.shape}")
+    else:
+        print(f"[SKIP] {case}: {name}.ndim={a.ndim} shape={a.shape} (no soportado)")
         return None
-
-    return a.astype(np.uint8)
-
+    return a
 
 def load_pred_nii(path, case=""):
-    """
-    Carga NIfTI y devuelve máscara binaria (D,H,W) uint8.
-    Soporta (D,H,W) o (C,D,H,W) (en cuyo caso toma argmax canal).
-    """
+    """Carga NIfTI y devuelve máscara binaria (D,H,W) uint8."""
     arr = nib.load(path).get_fdata()
-    if arr.ndim == 4 and arr.shape[0] == 1:
-        arr = arr[0]
-    elif arr.ndim == 4:
-        # Si estuviera one-hot/probs en (C,D,H,W)
-        arr = np.argmax(arr, axis=0)
-
-    arr = to_3d_uint8(arr, "pred_nii", case)
+    # (C,D,H,W) -> argmax canal
+    if arr.ndim == 4:
+        if arr.shape[0] == 1:
+            arr = arr[0]
+        else:
+            arr = np.argmax(arr, axis=0)
+    arr = _ensure_3d(arr, "pred", case)
     if arr is None:
         return None
-
-    # Binariza por seguridad
-    if arr.max() > 1:
-        arr = (arr > 0).astype(np.uint8)
+    arr_u = arr.astype(np.float32)
+    # Heurística de binarización:
+    if arr_u.max() <= 1.0:
+        arr_b = (arr_u > 0.5).astype(np.uint8)
     else:
-        arr = (arr > 0.5).astype(np.uint8)
-    return arr
-
+        arr_b = (arr_u > 0).astype(np.uint8)
+    return arr_b
 
 def dice_hd95(gt_bool, pr_bool, voxel_spacing=(1, 1, 1)):
     if pr_bool.sum() > 0 and gt_bool.sum() > 0:
@@ -66,31 +62,15 @@ def dice_hd95(gt_bool, pr_bool, voxel_spacing=(1, 1, 1)):
         return float(dsc), float(hd)
     return 0.0, 50.0
 
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--data_dir",
-        required=True,
-        help="Ruta a data/fullres/<dataset> (la misma que usaste para inferencia)",
-    )
-    parser.add_argument(
-        "--pred_dir",
-        required=True,
-        help="Carpeta con los .nii.gz de predicción (p.ej. .../prediction_results/segmamba)",
-    )
-    parser.add_argument(
-        "--out_dir",
-        default="/home/trawlins/tesis/prediction_results/result_metrics",
-    )
-    parser.add_argument(
-        "--csv_name",
-        default="colorectal_metrics_roi_from_dataloader.csv",
-    )
-    parser.add_argument(
-        "--npy_name",
-        default="colorectal_metrics_roi_from_dataloader.npy",
-    )
+    parser.add_argument("--data_dir", required=True,
+                        help="Ruta a data/fullres/<dataset> (la misma que usaste en inferencia)")
+    parser.add_argument("--pred_dir", required=True,
+                        help="Carpeta con los .nii.gz de predicción (p.ej. .../prediction_results/segmamba)")
+    parser.add_argument("--out_dir", default="/home/trawlins/tesis/prediction_results/result_metrics")
+    parser.add_argument("--csv_name", default="colorectal_metrics_roi_from_dataloader.csv")
+    parser.add_argument("--npy_name", default="colorectal_metrics_roi_from_dataloader.npy")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -108,22 +88,21 @@ def main():
         props = batch["properties"]
         case = props["name"][0] if isinstance(props["name"], (list, tuple)) else props["name"]
 
-        # GT ROI desde dataloader (exactamente como en inferencia)
-        if "seg" not in batch or batch["seg"] is None:
-            print(f"[SKIP] {case}: batch no tiene 'seg'.")
+        # === GT (ROI del dataloader, como en inferencia) ===
+        seg = batch.get("seg", None)
+        if seg is None:
+            print(f"[SKIP] {case}: batch sin 'seg'.")
             skipped += 1
             continue
 
-        gt_raw = batch["seg"][0, 0].detach().cpu().numpy()  # puede venir con 255
-        gt = to_3d_uint8(gt_raw, "gt", case)
+        gt_raw = seg.detach().cpu().numpy()  # puede ser 5D/4D/3D/2D
+        gt = _ensure_3d(gt_raw, "gt", case)
         if gt is None:
             skipped += 1
             continue
+        gt = _as_uint8_01(gt)  # binario 0/1
 
-        gt[gt == 255] = 0
-        gt = (gt == 1).astype(np.uint8)  # binario 0/1
-
-        # Pred ROI desde NIfTI guardado
+        # === Pred ROI guardada (nii.gz) ===
         pred_path = os.path.join(args.pred_dir, f"{case}.nii.gz")
         if not os.path.exists(pred_path):
             print(f"[SKIP] {case}: pred no encontrada en {pred_path}")
@@ -141,8 +120,9 @@ def main():
                 t = torch.from_numpy(pred.astype(np.float32))[None, None]  # (1,1,D,H,W)
                 t = F.interpolate(t, size=gt.shape, mode="nearest")
                 pred = t[0, 0].byte().numpy()
+                print(f"[INFO] {case}: pred reshaped {pred.shape} -> {gt.shape}")
             else:
-                print(f"[SKIP] {case}: pred.shape={pred.shape} gt.shape={gt.shape} (dims incompatible)")
+                print(f"[SKIP] {case}: pred.shape={pred.shape} gt.shape={gt.shape} (dims incompatibles)")
                 skipped += 1
                 continue
 
@@ -173,7 +153,6 @@ def main():
     print("📄 Guardado en:")
     print(" -", os.path.join(args.out_dir, args.npy_name))
     print(" -", csv_path)
-
 
 if __name__ == "__main__":
     main()
