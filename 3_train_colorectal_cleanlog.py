@@ -115,7 +115,7 @@ class ColorectalVesselsTrainer(Trainer):
         pred = self.model(image)               # (B, 2, D, H, W)
         loss = self.cross(pred, label)         # CE 2 clases
         # self.log("training_loss", loss, step=self.global_step)
-        logging.info(f"[train] epoch={self.epoch + 1} step={self.global_step + 1} loss={loss.item():.5f} lr={curr_lr:.6f}")
+        logging.info(f"[train] epoch={self.epoch + 1} step={self.global_step + 1} loss={loss.item():.5f}")
         return loss
 
     def cal_metric(self, gt, pred):
