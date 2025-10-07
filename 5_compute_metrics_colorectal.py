@@ -69,7 +69,7 @@ def ensure_same_shape(pred_np, gt_np):
     # Re-muestrea PRED a la forma del GT (nearest)
     pred_t = torch.from_numpy(pred_np)[None, None].float()
     pred_t = F.interpolate(pred_t, size=gt_np.shape, mode="nearest")
-    pred_np2 = pred_t.squeeze(0)..squeeze(0).byte().numpy()
+    pred_np2 = pred_t.squeeze(0).squeeze(0).byte().numpy()
     return pred_np2, gt_np
 
 
