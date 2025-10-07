@@ -50,34 +50,14 @@ def to_numpy_uint8(x):
     return x.astype(np.uint8)
 
 def ensure_same_shape(pred_np, gt_np):
-    import torch
-    import torch.nn.functional as F
-    import numpy as np
+    import torch, numpy as np, torch.nn.functional as F
 
     def to_3d(arr):
         arr = np.asarray(arr)
-        if arr.ndim == 2:
-            # (H,W) -> (1,H,W)
-            arr = arr[None, ...]
-        elif arr.ndim == 3:
-            # (D,H,W) ok
-            pass
+        if arr.ndim == 2:  arr = arr[None, ...]
         elif arr.ndim == 4:
-            if arr.shape[0] <= arr.shape[-1]:
-                if arr.shape[0] > 1:
-                    arr = np.argmax(arr, axis=0)
-                else:
-                    arr = arr[0]
-            else:
-                if arr.shape[-1] > 1:
-                    arr = np.argmax(arr, axis=-1)
-                else:
-                    arr = arr[..., 0]
-
-            if arr.ndim == 2:
-                arr = arr[None, ...]
-        else:
-            raise ValueError(f"Arreglo con ndim no soportado: {arr.ndim}")
+            # colapsa canales si los hay
+            arr = np.argmax(arr, axis=0) if arr.shape[0] > 1 else arr[0]
         return arr.astype(np.uint8)
 
     pred_np = to_3d(pred_np)
@@ -86,10 +66,11 @@ def ensure_same_shape(pred_np, gt_np):
     if pred_np.shape == gt_np.shape:
         return pred_np, gt_np
 
-    gt_t = torch.from_numpy(gt_np)[None, None].float()
-    gt_t = F.interpolate(gt_t, size=pred_np.shape, mode="nearest")
-    gt_np2 = gt_t.squeeze(0).squeeze(0).byte().numpy()
-    return pred_np, gt_np2
+    # Re-muestrea PRED a la forma del GT (nearest)
+    pred_t = torch.from_numpy(pred_np)[None, None].float()
+    pred_t = F.interpolate(pred_t, size=gt_np.shape, mode="nearest")
+    pred_np2 = pred_t.squeeze(0)..squeeze(0).byte().numpy()
+    return pred_np2, gt_np
 
 
 def cal_metric_binary(gt, pred, voxel_spacing):
@@ -175,7 +156,16 @@ def main():
         pred_np, gt_np = ensure_same_shape(pred_np, gt_np)
 
         # Métricas binario
-        m = cal_metric_binary(gt_np, pred_np, pred_vox)  # usa spacing del pred
+        props_spacing = None
+        if isinstance(props, dict):
+            s = props.get("spacing", None)  # típicamente [sx, sy, sz] o [z,y,x]
+            if s is not None:
+                # asegúrate de usar orden Z,Y,X
+                if len(s) >= 3:
+                    props_spacing = (float(s[2]), float(s[1]), float(s[0]))
+        
+        voxelspacing = props_spacing or gt_voxspacing or pred_vox
+        m = cal_metric_binary(gt_np, pred_np, voxelspacing)
         results.append(m)
         case_names.append(case_name)
 
@@ -186,7 +176,16 @@ def main():
     results = np.stack(results, axis=0)  # [N, 2] con (dice, hd95)
     out_npy = os.path.join(args.out_dir, "colorectal_metrics.npy")
     np.save(out_npy, results)
-
+    
+    import csv
+    csv_path = os.path.join(args.out_dir, "colorectal_metrics.csv")
+    with open(csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["case", "dice", "hd95"])
+        for name, (dice, hd) in zip(case_names, results):
+            w.writerow([name, float(dice), float(hd)])
+    print(f"Guardado CSV: {csv_path}")
+    
     mean = results.mean(axis=0)
     std = results.std(axis=0)
     print(f"Guardado: {out_npy}")
