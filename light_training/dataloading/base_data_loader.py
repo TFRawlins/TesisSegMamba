@@ -134,7 +134,7 @@ class DataLoaderMultiProcess:
             padding = [(-min(0, bbox_lbs[i]), max(bbox_ubs[i] - shape[i], 0)) for i in range(dim)]
             # print(f"box is {bbox_lbs, bbox_ubs}, padding is {padding}")
             #data_all[j] = np.pad(data, ((0, 0), *padding), 'constant', constant_values=0)
-            target_shape = (1, 64, 64, 96)
+            target_shape = (1, 96, 96, 96)
             data_fixed = pad_or_crop_to(data, target_shape)
             data_all[j] = data_fixed
             seg_fixed = pad_or_crop_to(seg, target_shape)
