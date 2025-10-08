@@ -72,7 +72,7 @@ batch_size = args.batch_size
 val_every = 5
 num_gpus = torch.cuda.device_count()
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-roi_size = [80, 80, 80]
+roi_size = [64, 64, 64]
 logging.info(f"device={device} | num_gpus={num_gpus} | epochs={max_epoch} | batch_size={batch_size} | sw_batch_size={args.sw_batch_size}")
 
 
