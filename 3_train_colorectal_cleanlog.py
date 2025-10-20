@@ -28,7 +28,8 @@ from monai.transforms import (
 )
 from monai.data import Dataset, CacheDataset
 from monai.inferers import SlidingWindowInferer
-
+mport monai.transforms.compose as _monai_comp
+_monai_comp.get_seed = lambda: 123
 from light_training.trainer import Trainer
 from light_training.evaluation.metric import dice
 from light_training.utils.files_helper import save_new_model_and_delete_last
