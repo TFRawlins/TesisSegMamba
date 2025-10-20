@@ -231,10 +231,17 @@ class ColorectalVesselsTrainer(Trainer):
             val_ds, batch_size=self.batch_size, shuffle=False,
             num_workers=num_workers, pin_memory=True
         )
-
+    
         self.model.to(self.device)
-        scaler = self.scaler  # GradScaler creado por Trainer base si AMP activo
-
+        scaler = getattr(self, "grad_scaler", None)
+        if scaler is None:
+            try:
+                scaler = torch.amp.GradScaler('cuda')  # API nueva
+            except Exception:
+                from torch.cuda.amp import GradScaler   # fallback legacy
+                scaler = GradScaler()
+                
+            self.grad_scaler = scaler
         global_step = 0
         for epoch in range(self.max_epochs):
             self.epoch = epoch
@@ -247,7 +254,7 @@ class ColorectalVesselsTrainer(Trainer):
                 with autocast(device_type="cuda", dtype=torch.float16):
                     logits = self.model(image)
                     loss = self.cross(logits, label)
-
+                
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
                 scaler.update()
