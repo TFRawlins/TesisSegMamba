@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler as LegacyGradScaler
+from torch.utils.tensorboard import SummaryWriter
 
 from monai.utils import set_determinism
 from monai.transforms import (
@@ -224,7 +225,15 @@ class ColorectalVesselsTrainer(Trainer):
                  logdir="./logs/", master_ip='localhost', master_port=17750, training_script="train.py"):
         super().__init__(env_type, max_epochs, batch_size, device, val_every, num_gpus,
                          logdir, master_ip, master_port, training_script)
-
+        self.writer = getattr(self, "writer", None)
+        if self.writer is None:
+            try:
+                tb_dir = os.path.join(logdir, f"tb_fold{args.fold}")
+                os.makedirs(tb_dir, exist_ok=True)
+                self.writer = SummaryWriter(log_dir=tb_dir)
+            except Exception as e:
+                self.writer = None
+                logging.warning(f"No se pudo iniciar TensorBoard SummaryWriter: {e}")
         self.window_infer = SlidingWindowInferer(roi_size=ROI_SIZE, sw_batch_size=args.sw_batch_size, overlap=0.5)
         self.augmentation = True
 
@@ -320,7 +329,11 @@ class ColorectalVesselsTrainer(Trainer):
                             dices.append(np.mean(dlist))
 
                 mean_dice = float(np.mean(dices)) if dices else 0.0
-                self.log("mean_dice", mean_dice, step=epoch)
+                if getattr(self, "writer", None) is not None:
+                    self.writer.add_scalar("mean_dice", mean_dice, epoch + 1)
+                else:
+                    logging.info(f"[val-scalar] mean_dice@epoch{epoch+1} = {mean_dice:.4f}")
+                
                 logging.info(f"[val] epoch={epoch+1} mean_dice={mean_dice:.4f}")
 
                 best_path = os.path.join(FOLD_SAVE, "best_model.pt")
