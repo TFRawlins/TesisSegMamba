@@ -177,13 +177,14 @@ train_transforms = Compose([
     LoadImaged(keys=["image", "label"]),
     EnsureChannelFirstd(keys=["image", "label"]),
     ScaleIntensityRanged(keys=["image"], a_min=-1000, a_max=2000, b_min=0.0, b_max=1.0, clip=True),
-    SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="constant", mode="constant", value=0),
+
+    SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="end"),
 
     RandFlipd(keys=["image", "label"], prob=0.2, spatial_axis=0),
     RandRotate90d(keys=["image", "label"], prob=0.2, max_k=3),
     RandGaussianNoised(keys=["image"], prob=0.1),
-    RandSpatialCropd(keys=["image", "label"], roi_size=ROI_SIZE, random_center=True, random_size=False),
 
+    RandSpatialCropd(keys=["image", "label"], roi_size=ROI_SIZE, random_center=True, random_size=False),
     EnsureTyped(keys=["image", "label"]),
 ])
 
@@ -191,11 +192,13 @@ val_transforms = Compose([
     LoadImaged(keys=["image", "label"]),
     EnsureChannelFirstd(keys=["image", "label"]),
     ScaleIntensityRanged(keys=["image"], a_min=-1000, a_max=2000, b_min=0.0, b_max=1.0, clip=True),
-    SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="constant", mode="constant", value=0),
+
+    SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="end"),
     CenterSpatialCropd(keys=["image", "label"], roi_size=ROI_SIZE),
 
     EnsureTyped(keys=["image", "label"]),
 ])
+
 
 # =====================
 # Model & Trainer
