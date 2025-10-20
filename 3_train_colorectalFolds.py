@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast
+from torch.cuda.amp import GradScaler as LegacyGradScaler
 
 from monai.utils import set_determinism
 from monai.transforms import (
@@ -34,6 +34,22 @@ import numpy as _np
 import monai.transforms.compose as _monai_comp
 SAFE_MAX = (1 << 32) - 1  # 4294967295
 _monai_comp.get_seed = lambda: 123
+
+from contextlib import nullcontext
+
+def autocast_ctx(dtype=torch.float16):
+    
+    if torch.cuda.is_available():
+        if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+            return torch.amp.autocast("cuda", dtype=dtype)
+        try:
+            from torch.cuda.amp import autocast as autocast_legacy
+            return autocast_legacy(dtype=dtype)
+        except Exception:
+            return nullcontext()
+    else:
+        return nullcontext()
+
 
 def _safe_set_random_state(self, seed=None, state=None):
     try:
@@ -261,9 +277,10 @@ class ColorectalVesselsTrainer(Trainer):
                 label = batch["label"][:, 0].long().to(self.device, non_blocking=True)
 
                 self.optimizer.zero_grad(set_to_none=True)
-                with autocast(device_type="cuda", dtype=torch.float16):
+                with autocast_ctx(dtype=torch.float16):
                     logits = self.model(image)
                     loss = self.cross(logits, label)
+
                 
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
