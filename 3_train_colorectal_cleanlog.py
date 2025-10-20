@@ -28,11 +28,44 @@ from monai.transforms import (
 )
 from monai.data import Dataset, CacheDataset
 from monai.inferers import SlidingWindowInferer
+import monai.transforms.compose as _monai_comp
+_monai_comp.get_seed = lambda: 123
+
+# --- MONAI seeding overflow hardening ---
+import numpy as _np
+import monai.transforms.compose as _monai_comp
+SAFE_MAX = (1 << 32) - 1  # 4294967295
+
+# Force a safe, deterministic base seed for Compose
+_monai_comp.get_seed = lambda: 123
+
+# Monkey-patch Compose.set_random_state to clamp seeds < 2**32
+def _safe_set_random_state(self, seed=None, state=None):
+    try:
+        base = int(seed) if seed is not None else 123
+    except Exception:
+        base = 123
+    base = int(base) % SAFE_MAX
+    rng = _np.random.RandomState(base)
+    for _t in getattr(self, "transforms", []):
+        try:
+            child_seed = int(rng.randint(SAFE_MAX))
+        except Exception:
+            child_seed = 123
+        try:
+            _t.set_random_state(seed=child_seed)
+        except Exception:
+            # Some transforms may not be random; ignore
+            pass
+    return self
+
+_monai_comp.Compose.set_random_state = _safe_set_random_state
+# --- end hardening ---
+
 from light_training.trainer import Trainer
 from light_training.evaluation.metric import dice
 from light_training.utils.files_helper import save_new_model_and_delete_last
-import monai.transforms.compose as _monai_comp
-_monai_comp.get_seed = lambda: 123
+
 # =====================
 # Args
 # =====================
@@ -196,6 +229,15 @@ class ColorectalVesselsTrainer(Trainer):
         self.augmentation = True
 
         from model_segmamba.segmamba import SegMamba
+
+# --- MONAI get_seed overflow hotfix ---
+try:
+    import monai.transforms.compose as _monai_comp
+    _monai_comp.get_seed = lambda: 123  # force a safe uint32 seed to avoid OverflowError
+except Exception as _e:
+    pass
+# --- end hotfix ---
+
         self.model = SegMamba(
             in_chans=1,
             out_chans=2,
