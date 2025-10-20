@@ -28,18 +28,15 @@ from monai.transforms import (
 )
 from monai.data import Dataset, CacheDataset
 from monai.inferers import SlidingWindowInferer
-import monai.transforms.compose as _monai_comp
-_monai_comp.get_seed = lambda: 123
 
-# --- MONAI seeding overflow hardening ---
+# --- MONAI seeding overflow hardening (prevents OverflowError: 2**32) ---
 import numpy as _np
 import monai.transforms.compose as _monai_comp
 SAFE_MAX = (1 << 32) - 1  # 4294967295
 
-# Force a safe, deterministic base seed for Compose
+# Force a safe deterministic base seed for Compose
 _monai_comp.get_seed = lambda: 123
 
-# Monkey-patch Compose.set_random_state to clamp seeds < 2**32
 def _safe_set_random_state(self, seed=None, state=None):
     try:
         base = int(seed) if seed is not None else 123
@@ -55,10 +52,11 @@ def _safe_set_random_state(self, seed=None, state=None):
         try:
             _t.set_random_state(seed=child_seed)
         except Exception:
-            # Some transforms may not be random; ignore
+            # Non-random transform, ignore
             pass
     return self
 
+# Monkey-patch Compose.set_random_state
 _monai_comp.Compose.set_random_state = _safe_set_random_state
 # --- end hardening ---
 
@@ -229,15 +227,6 @@ class ColorectalVesselsTrainer(Trainer):
         self.augmentation = True
 
         from model_segmamba.segmamba import SegMamba
-
-# --- MONAI get_seed overflow hotfix ---
-try:
-    import monai.transforms.compose as _monai_comp
-    _monai_comp.get_seed = lambda: 123  # force a safe uint32 seed to avoid OverflowError
-except Exception as _e:
-    pass
-# --- end hotfix ---
-
         self.model = SegMamba(
             in_chans=1,
             out_chans=2,
@@ -379,4 +368,3 @@ if __name__ == "__main__":
     logging.info("Datasets cargados. Iniciando entrenamiento...")
     trainer.train(train_dataset=train_ds, val_dataset=val_ds)
     logging.info("Entrenamiento finalizado.")
-  
