@@ -36,6 +36,37 @@ parser.add_argument("--fold_lists_dir", required=True, help="Carpeta con fold{n}
 args = parser.parse_args()
 
 # ======= Utils =======
+def _as_str_path(p):
+    # p puede ser str o [str]; devolvemos str
+    if isinstance(p, (list, tuple)):
+        return p[0] if p else None
+    return p
+
+def _get_ref_affine_and_header(item):
+    """
+    Intenta recuperar affine/header reales desde meta de label o image.
+    Prioriza label; si no, usa image. Devuelve (affine, header, ref_path_str).
+    """
+    import numpy as np
+    affine = None
+    header = None
+    ref_path = None
+
+    for key in ("label", "image"):
+        mkey = f"{key}_meta_dict"
+        if mkey in item:
+            meta = item[mkey]
+            ref_path = _as_str_path(meta.get("filename_or_obj"))
+            # MONAI suele guardar 'affine' u 'original_affine'
+            aff = meta.get("affine") or meta.get("original_affine")
+            if aff is not None:
+                affine = np.array(aff, dtype=float)
+            # Opcional: si tienes spacing en meta, puedes inyectarlo al header
+            # con nibabel más abajo (header.set_zooms(...))
+            break
+
+    return affine, header, ref_path
+
 def _load_holdout_ids(fold_lists_dir: str, fold: int):
     p = os.path.join(fold_lists_dir, f"fold{fold}_val.txt")
     assert os.path.isfile(p), f"No existe {p}"
@@ -160,24 +191,28 @@ class ColorectalPredict(Trainer):
         out_np = pred[0].cpu().numpy().astype(np.uint8)
         out_dir = os.path.join(args.save_dir, f"fold{args.fold}")
         os.makedirs(out_dir, exist_ok=True)
-    
-        # Tomamos como referencia el label si está, si no la imagen
-        ref_path = properties.get("label_path") or properties.get("img_path")
-        affine, header = None, None
-        try:
-            if ref_path:
-                ref_nii = nib.load(ref_path)
-                affine, header = ref_nii.affine, ref_nii.header
-        except Exception as e:
-            print(f"[WARN] no se pudo leer referencia '{ref_path}': {e} -> uso identidad")
-    
+        
+        affine, header, ref_path = _get_ref_affine_and_header(item=properties if isinstance(properties, dict) else {})
+        
+        import nibabel as nib
+        import numpy as _np
+        
         if affine is None:
+            # último recurso: identidad (evitar, pero mejor que crashear)
             affine = _np.eye(4)
-    
+        
         out_nii = nib.Nifti1Image(out_np, affine=affine, header=header)
+        
+        # Si quieres intentar setear spacing cuando no hubo header/affine:
+        # spacing = properties.get("spacing") or item["image_meta_dict"].get("pixdim", None)
+        # if spacing is not None:
+        #     try: out_nii.header.set_zooms(tuple(spacing))
+        #     except: pass
+        
         save_path = os.path.join(out_dir, f"{case_name}.nii.gz")
         nib.save(out_nii, save_path)
-        print(f"[SAVE] {save_path}")
+        print(f"[SAVE] {save_path} (ref={ref_path})")
+
     
         return 0
 
