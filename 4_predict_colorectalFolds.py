@@ -115,56 +115,72 @@ class ColorectalPredict(Trainer):
     @torch.no_grad()
     def validation_step(self, batch):
         import torch.nn.functional as F
-
+        import nibabel as nib
+        import numpy as _np
+    
         image, label, properties = self.get_input(batch)
         model, predictor = self.define_model()
         model.to(args.device)
-
+    
         # case_id
         case_name = properties["name"][0] if isinstance(properties["name"], list) else str(properties["name"])
         print(f"\n[CASE] {case_name}")
-
+    
         # Forward SW + mirror
         x = image.float()
         print("[INPUT] shape:", tuple(x.shape),
               "min:", float(x.min()), "max:", float(x.max()),
               "mean:", float(x.mean()), "std:", float(x.std()))
-
+    
         with torch.amp.autocast(device_type="cuda", enabled=("cuda" in args.device)):
             logits_sw = predictor.maybe_mirror_and_predict(image, model, device=args.device)
         if logits_sw.dim() == 4:  # [C,D,H,W] -> [1,C,D,H,W]
             logits_sw = logits_sw.unsqueeze(0)
-
+    
         # Ajuste a shape del label si existe (para calcular métricas en el mismo ROI)
         if label is not None:
             target_shape = tuple(label.shape[-3:])
         else:
             target_shape = tuple(logits_sw.shape[-3:])
-
+    
         if tuple(logits_sw.shape[-3:]) != target_shape:
             logits_sw = F.interpolate(logits_sw, size=target_shape, mode="trilinear", align_corners=False)
-
+    
         probs = torch.softmax(logits_sw, dim=1)
         pred = probs.argmax(dim=1)  # [1,D,H,W]
-
+    
         # Métricas rápidas (Dice binario en ROI) - opcional, para logging
         if label is not None:
             gt = (label[0,0] > 0).to(torch.uint8).cpu().numpy()
             pr = pred[0].to(torch.uint8).cpu().numpy()
             d = float(dice(pr, gt)) if (gt.sum() > 0 or pr.sum() > 0) else 1.0
             print(f"[ROI] Dice clase 1 = {d:.4f}  (pos_pred={int(pr.sum())}, pos_gt={int(gt.sum())})")
-
-        # Guardado NIfTI (usa Predictor.save_to_nii para mantener tu flujo)
+    
+        # ---- Guardado NIfTI con affine/header reales ----
         out_np = pred[0].cpu().numpy().astype(np.uint8)
         out_dir = os.path.join(args.save_dir, f"fold{args.fold}")
-        Predictor.save_to_nii(
-            out_np,
-            raw_spacing=[1,1,1],  # si tienes spacing real en properties, cámbialo aquí
-            case_name=case_name,
-            save_dir=out_dir,
-        )
-        print(f"[SAVE] {os.path.join(out_dir, case_name + '.nii.gz')}")
+        os.makedirs(out_dir, exist_ok=True)
+    
+        # Tomamos como referencia el label si está, si no la imagen
+        ref_path = properties.get("label_path") or properties.get("img_path")
+        affine, header = None, None
+        try:
+            if ref_path:
+                ref_nii = nib.load(ref_path)
+                affine, header = ref_nii.affine, ref_nii.header
+        except Exception as e:
+            print(f"[WARN] no se pudo leer referencia '{ref_path}': {e} -> uso identidad")
+    
+        if affine is None:
+            affine = _np.eye(4)
+    
+        out_nii = nib.Nifti1Image(out_np, affine=affine, header=header)
+        save_path = os.path.join(out_dir, f"{case_name}.nii.gz")
+        nib.save(out_nii, save_path)
+        print(f"[SAVE] {save_path}")
+    
         return 0
+
 
 # ======= Main =======
 if __name__ == "__main__":
@@ -194,14 +210,15 @@ if __name__ == "__main__":
     class _WrapDataset(Dataset):
         def __getitem__(self, index):
             item = super().__getitem__(index)
-            # Renombrar a lo que espera get_input
             data = item["image"]
             seg  = item["label"]
             props = {
-                "name": item.get("case_id", f"case_{index}")
+                "name": item.get("case_id", f"case_{index}"),
+                "img_path": item["image_meta_dict"]["filename_or_obj"],
+                "label_path": item["label_meta_dict"]["filename_or_obj"],
             }
             return {"data": data, "seg": seg, "properties": props}
-            
+
     base_ds = Dataset(data=samples, transform=tf)
     ds = _WrapDataset(data=base_ds.data, transform=base_ds.transform)
     
