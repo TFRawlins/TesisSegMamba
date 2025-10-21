@@ -194,31 +194,54 @@ if __name__ == "__main__":
 
     # 3) Transforms (sin augmentations) + renombre de claves a data/seg/properties
     tf = Compose([
-        LoadImaged(keys=["image", "label"]),
+        LoadImaged(keys=["image", "label"]),  # inyecta *_meta_dict
         EnsureChannelFirstd(keys=["image", "label"]),
         ScaleIntensityRanged(
-            keys=["image"],
-            a_min=-1000, a_max=2000,
-            b_min=0.0, b_max=1.0,
-            clip=True
+            keys=["image"], a_min=-1000, a_max=2000,
+            b_min=0.0, b_max=1.0, clip=True
         ),
-        EnsureTyped(keys=["image", "label"]),
+        # Mantener meta como MetaTensor (con .meta) y NO borrar *_meta_dict
+        EnsureTyped(keys=["image", "label"], track_meta=True),
     ])
 
 
-    base_ds = Dataset(data=samples, transform=tf)
+
+    def _get_path(item, key: str):
+        """
+        Devuelve la ruta del archivo desde:
+        1) item[f"{key}_meta_dict"]["filename_or_obj"] si existe, o
+        2) item[key].meta["filename_or_obj"] si es MetaTensor, o
+        3) None si no está disponible.
+        """
+        # Opción 1: *_meta_dict
+        meta_key = f"{key}_meta_dict"
+        if meta_key in item and "filename_or_obj" in item[meta_key]:
+            return item[meta_key]["filename_or_obj"]
+    
+        # Opción 2: MetaTensor.meta
+        v = item.get(key, None)
+        if hasattr(v, "meta") and isinstance(getattr(v, "meta"), dict):
+            if "filename_or_obj" in v.meta:
+                return v.meta["filename_or_obj"]
+    
+        return None
+    
+    
     class _WrapDataset(Dataset):
         def __getitem__(self, index):
-            item = super().__getitem__(index)
+            item = super().__getitem__(index)  # aplica transforms
+    
             data = item["image"]
             seg  = item["label"]
+    
             props = {
                 "name": item.get("case_id", f"case_{index}"),
-                "img_path": item["image_meta_dict"]["filename_or_obj"],
-                "label_path": item["label_meta_dict"]["filename_or_obj"],
+                "img_path": _get_path(item, "image"),
+                "label_path": _get_path(item, "label"),
             }
             return {"data": data, "seg": seg, "properties": props}
     
+    # Crea directamente el dataset envuelto (no uses base_ds.data/transform)
     ds = _WrapDataset(data=samples, transform=tf)
 
     
