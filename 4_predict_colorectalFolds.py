@@ -201,12 +201,10 @@ if __name__ == "__main__":
                 "name": item.get("case_id", f"case_{index}")
             }
             return {"data": data, "seg": seg, "properties": props}
-
+            
     base_ds = Dataset(data=samples, transform=tf)
     ds = _WrapDataset(data=base_ds.data, transform=base_ds.transform)
-    dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0, pin_memory=True)
-
-    # 4) Correr validación (usa validation_step para cada caso)
+    
     predictor_trainer = ColorectalPredict(device=args.device)
-    predictor_trainer.val_loader = dl
-    predictor_trainer.validation_single_gpu(dl)
+    predictor_trainer.validation_single_gpu(ds)
+
