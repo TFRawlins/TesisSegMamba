@@ -194,19 +194,19 @@ if __name__ == "__main__":
 
     # 3) Transforms (sin augmentations) + renombre de claves a data/seg/properties
     tf = Compose([
-        LoadImaged(keys=["image","label"]),
-        EnsureChannelFirstd(keys=["image","label"]),
-        ScaleIntensityRanged(keys=["image"], a_min=-1000, a_max=2000, b_min=0.0, b_max=1.0, clip=True),
-        EnsureTyped(keys=["image","label"]),
-        Lambdad(keys=["image","label","case_id"], func=lambda x: x),  # no-op (para asegurar presencia)
-        # Renombrar/inyectar propiedades para que get_input funcione sin tocar Trainer base
-        Lambdad(
-            keys=["image","label","case_id"],
-            func=lambda x: x
+        LoadImaged(keys=["image", "label"]),
+        EnsureChannelFirstd(keys=["image", "label"]),
+        ScaleIntensityRanged(
+            keys=["image"],
+            a_min=-1000, a_max=2000,
+            b_min=0.0, b_max=1.0,
+            clip=True
         ),
+        EnsureTyped(keys=["image", "label"]),
     ])
 
-    # MONAI no renombra claves; construimos Dataset y en __getitem__ transformamos a data/seg/properties
+
+    base_ds = Dataset(data=samples, transform=tf)
     class _WrapDataset(Dataset):
         def __getitem__(self, index):
             item = super().__getitem__(index)
@@ -218,9 +218,9 @@ if __name__ == "__main__":
                 "label_path": item["label_meta_dict"]["filename_or_obj"],
             }
             return {"data": data, "seg": seg, "properties": props}
+    
+    ds = _WrapDataset(data=samples, transform=tf)
 
-    base_ds = Dataset(data=samples, transform=tf)
-    ds = _WrapDataset(data=base_ds.data, transform=base_ds.transform)
     
     predictor_trainer = ColorectalPredict(device=args.device)
     predictor_trainer.validation_single_gpu(ds)
