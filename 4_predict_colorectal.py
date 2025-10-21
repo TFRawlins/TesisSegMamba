@@ -18,7 +18,7 @@ parser.add_argument("--data_dir", required=True, help="Ruta a data/fullres/<data
 parser.add_argument("--ckpt", required=True, help="Ruta al best_model.pt")
 parser.add_argument("--save_dir", default="/home/trawlins/tesis/prediction_results/segmamba")
 parser.add_argument("--device", default="cuda:0")
-parser.add_argument("--roi", type=int, nargs=3, default=[96,96,96])
+parser.add_argument("--roi", type=int, nargs=3, default=[128,128,128])
 parser.add_argument("--sw_batch_size", type=int, default=1)
 parser.add_argument("--overlap", type=float, default=0.5)
 parser.add_argument("--mirror_axes", type=int, nargs="*", default=[0,1,2])
