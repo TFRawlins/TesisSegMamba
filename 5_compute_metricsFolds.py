@@ -13,10 +13,8 @@ from light_training.dataloading.dataset import get_train_val_test_loader_from_tr
 set_determinism(123)
 
 def _as_uint8_01(a):
-    a = a.astype(np.uint8, copy=False)
-    a[a == 255] = 0
-    a = (a == 1).astype(np.uint8, copy=False)
-    return a
+    a = np.asarray(a)
+    return (a > 0).astype(np.uint8, copy=False)
 
 def _ensure_3d(arr, name="", case=""):
     a = np.asarray(arr)
@@ -55,12 +53,7 @@ def _resize_to(arr_3d_uint8, target_shape):
     return t[0,0].byte().numpy()
 
 def _orient_candidates(pred_xyz):
-    """
-    pred_xyz viene como lo devuelve nib (X,Y,Z).
-    Genera candidatos en orden (D,H,W)≈(Z,Y,X) y variantes con flips,
-    porque el GT del dataloader suele estar en (D,H,W).
-    """
-    # Permutaciones: identidad (X,Y,Z) y (Z,Y,X)
+
     perms = [
         ("xyz", (0,1,2)),
         ("zyx", (2,1,0)),
@@ -115,7 +108,9 @@ def main():
     
     for lab_path in tqdm(label_paths, total=len(label_paths)):
         case = os.path.basename(lab_path).replace(".nii.gz", "")
-        gt_xyz = nib.load(lab_path).get_fdata()
+        gt_nii = nib.load(lab_path)
+        gt_xyz = gt_nii.get_fdata()
+        zooms = gt_nii.header.get_zooms()[:3]
         gt = _ensure_3d(gt_xyz, "gt", case)
         if gt is None:
             skipped += 1
@@ -140,7 +135,7 @@ def main():
                 continue
             if cand.shape != gt.shape:
                 cand = _resize_to(cand, gt.shape)
-            d, h = _dice_hd95(gt.astype(bool), cand.astype(bool), spacing=(1,1,1))
+            d, h = _dice_hd95(gt.astype(bool), cand.astype(bool), spacing=zooms)
             if d > best_dice:
                 best_dice, best_hd, best_tag, best_arr = d, h, tag, cand
     
