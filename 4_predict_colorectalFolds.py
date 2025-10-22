@@ -264,13 +264,14 @@ if __name__ == "__main__":
     
     class _WrapDataset(Dataset):
         def __getitem__(self, index):
-            item = super().__getitem__(index)  # aplica transforms
-    
+            item = super().__getitem__(index)
             data = item["image"]
             seg  = item["label"]
-    
             props = {
                 "name": item.get("case_id", f"case_{index}"),
+                # guarda también metadatos completos para el saver
+                "image_meta_dict": item.get("image_meta_dict"),
+                "label_meta_dict": item.get("label_meta_dict"),
                 "img_path": _get_path(item, "image"),
                 "label_path": _get_path(item, "label"),
             }
