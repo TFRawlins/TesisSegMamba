@@ -19,12 +19,10 @@ from monai.transforms import (
     LoadImaged,
     EnsureChannelFirstd,
     ScaleIntensityRanged,
-    RandSpatialCropd,
     RandFlipd,
     RandRotate90d,
     RandGaussianNoised,
-    SpatialPadd,            
-    CenterSpatialCropd,   
+    SpatialPadd,
     EnsureTyped,
 )
 from monai.data import Dataset, CacheDataset
@@ -39,7 +37,6 @@ _monai_comp.get_seed = lambda: 123
 from contextlib import nullcontext
 
 def autocast_ctx(dtype=torch.float16):
-    
     if torch.cuda.is_available():
         if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
             return torch.amp.autocast("cuda", dtype=dtype)
@@ -73,6 +70,7 @@ def _safe_set_random_state(self, seed=None, state=None):
 _monai_comp.Compose.set_random_state = _safe_set_random_state
 # --- end hardening ---
 
+from monai.transforms import RandCropByPosNegLabeld
 from light_training.trainer import Trainer
 from light_training.evaluation.metric import dice
 from light_training.utils.files_helper import save_new_model_and_delete_last
@@ -190,32 +188,38 @@ def build_sample_list_from_ids(data_dir: str, ids: List[str]) -> List[dict]:
 # =====================
 # Datasets & Transforms (MONAI)
 # =====================
+# Train: sampler foreground-aware (mejor para clases pequeñas)
 train_transforms = Compose([
     LoadImaged(keys=["image", "label"]),
     EnsureChannelFirstd(keys=["image", "label"]),
     ScaleIntensityRanged(keys=["image"], a_min=-1000, a_max=2000, b_min=0.0, b_max=1.0, clip=True),
 
     SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="end"),
-
     RandFlipd(keys=["image", "label"], prob=0.2, spatial_axis=0),
     RandRotate90d(keys=["image", "label"], prob=0.2, max_k=3),
     RandGaussianNoised(keys=["image"], prob=0.1),
 
-    RandSpatialCropd(keys=["image", "label"], roi_size=ROI_SIZE, random_center=True, random_size=False),
+    RandCropByPosNegLabeld(
+        keys=["image", "label"],
+        label_key="label",
+        spatial_size=ROI_SIZE,
+        pos=1, neg=1,
+        num_samples=1,
+        image_key="image",
+        image_threshold=0,
+    ),
+
     EnsureTyped(keys=["image", "label"]),
 ])
 
+# Val: NO crops (validar en volumen completo con SW)
 val_transforms = Compose([
     LoadImaged(keys=["image", "label"]),
     EnsureChannelFirstd(keys=["image", "label"]),
     ScaleIntensityRanged(keys=["image"], a_min=-1000, a_max=2000, b_min=0.0, b_max=1.0, clip=True),
-
     SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="end"),
-    CenterSpatialCropd(keys=["image", "label"], roi_size=ROI_SIZE),
-
     EnsureTyped(keys=["image", "label"]),
 ])
-
 
 # =====================
 # Model & Trainer
@@ -234,7 +238,10 @@ class ColorectalVesselsTrainer(Trainer):
             except Exception as e:
                 self.writer = None
                 logging.warning(f"No se pudo iniciar TensorBoard SummaryWriter: {e}")
-        self.window_infer = SlidingWindowInferer(roi_size=ROI_SIZE, sw_batch_size=args.sw_batch_size, overlap=0.5)
+
+        self.window_infer = SlidingWindowInferer(
+            roi_size=ROI_SIZE, sw_batch_size=args.sw_batch_size, overlap=0.5
+        )
         self.augmentation = True
 
         from model_segmamba.segmamba import SegMamba
@@ -252,11 +259,17 @@ class ColorectalVesselsTrainer(Trainer):
         self.optimizer = torch.optim.SGD(
             self.model.parameters(), lr=1e-2, weight_decay=3e-5, momentum=0.99, nesterov=True
         )
-        # Si tu Trainer crea scheduler internamente, lo toma; si no, puedes añadir uno aquí.
+        # Scheduler polinómico (si tu Trainer no lo crea por dentro)
         self.scheduler_type = "poly"
-        self.cross = nn.CrossEntropyLoss()
 
-    # BYPASS: entrenamiento con DataLoader de MONAI/PyTorch (sin batchgenerators)
+        # Pérdida (Dice+CE) — mejor para clases pequeñas
+        from monai.losses import DiceCELoss
+        self.loss_fn = DiceCELoss(
+            to_onehot_y=True, softmax=True, ce_weight=None,
+            include_background=False, lambda_dice=1.0, lambda_ce=1.0
+        )
+
+    # Entrenamiento con DataLoader de MONAI (sin batchgenerators)
     def fit_monai(self, train_ds, val_ds, num_workers: int = 0, val_every: int = 5):
         train_loader = DataLoader(
             train_ds, batch_size=self.batch_size, shuffle=True,
@@ -266,7 +279,7 @@ class ColorectalVesselsTrainer(Trainer):
             val_ds, batch_size=self.batch_size, shuffle=False,
             num_workers=num_workers, pin_memory=True
         )
-    
+
         self.model.to(self.device)
         scaler = getattr(self, "grad_scaler", None)
         if scaler is None:
@@ -275,8 +288,8 @@ class ColorectalVesselsTrainer(Trainer):
             except Exception:
                 from torch.cuda.amp import GradScaler   # fallback legacy
                 scaler = GradScaler()
-                
             self.grad_scaler = scaler
+
         global_step = 0
         for epoch in range(self.max_epochs):
             self.epoch = epoch
@@ -288,9 +301,8 @@ class ColorectalVesselsTrainer(Trainer):
                 self.optimizer.zero_grad(set_to_none=True)
                 with autocast_ctx(dtype=torch.float16):
                     logits = self.model(image)
-                    loss = self.cross(logits, label)
+                    loss = self.loss_fn(logits, label)  # <<< FIX: usar la loss definida
 
-                
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
                 scaler.update()
@@ -304,7 +316,7 @@ class ColorectalVesselsTrainer(Trainer):
             if hasattr(self, "scheduler") and self.scheduler is not None:
                 self.scheduler.step()
 
-            # Validación periódica
+            # Validación periódica — **volumen completo** con SW
             if ((epoch + 1) % val_every) == 0 or (epoch + 1) == self.max_epochs:
                 self.model.eval()
                 dices = []
@@ -312,29 +324,24 @@ class ColorectalVesselsTrainer(Trainer):
                     for batch in val_loader:
                         img = batch["image"].to(self.device, non_blocking=True)
                         lab = batch["label"][:, 0].long().to(self.device, non_blocking=True)
-                        logits = self.model(img)
-                        preds = torch.argmax(logits, dim=1)
 
-                        p_np = preds.detach().cpu().numpy().astype(np.uint8)
+                        logits = self.window_infer(img, self.model)   # [B, C, D, H, W]
+                        pred = torch.argmax(logits, dim=1)            # [B, D, H, W]
+
+                        p_np = pred.detach().cpu().numpy().astype(np.uint8)
                         g_np = lab.detach().cpu().numpy().astype(np.uint8)
-                        dlist = []
                         for p, g in zip(p_np, g_np):
                             d = dice(p, g) if (p.sum() > 0 or g.sum() > 0) else 1.0
                             if isinstance(d, np.ndarray):
                                 d = float(d)
                             elif torch.is_tensor(d):
                                 d = float(d.item())
-                            dlist.append(d)
-                        if dlist:
-                            dices.append(np.mean(dlist))
+                            dices.append(d)
 
                 mean_dice = float(np.mean(dices)) if dices else 0.0
                 if getattr(self, "writer", None) is not None:
-                    self.writer.add_scalar("mean_dice", mean_dice, epoch + 1)
-                else:
-                    logging.info(f"[val-scalar] mean_dice@epoch{epoch+1} = {mean_dice:.4f}")
-                
-                logging.info(f"[val] epoch={epoch+1} mean_dice={mean_dice:.4f}")
+                    self.writer.add_scalar("mean_dice_fullVol", mean_dice, epoch + 1)
+                logging.info(f"[val-FULL] epoch={epoch+1} mean_dice={mean_dice:.4f}")
 
                 best_path = os.path.join(FOLD_SAVE, "best_model.pt")
                 final_path = os.path.join(FOLD_SAVE, f"final_model_{mean_dice:.4f}.pt")
