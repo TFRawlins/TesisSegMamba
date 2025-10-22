@@ -33,6 +33,8 @@ parser.add_argument("--mirror_axes", type=int, nargs="*", default=[0, 1, 2])
 # Folds
 parser.add_argument("--fold", type=int, default=0, help="Fold index [0..4]")
 parser.add_argument("--fold_lists_dir", required=True, help="Carpeta con fold{n}_train.txt y fold{n}_val.txt")
+parser.add_argument("--prob_thresh", type=float, default=0.40)
+parser.add_argument("--empty_fallback_q", type=float, default=0.999)
 args = parser.parse_args()
 
 
@@ -159,8 +161,11 @@ class ColorectalPredict(Trainer):
             logits_sw = F.interpolate(logits_sw, size=target_shape, mode="trilinear", align_corners=False)
 
         probs = torch.softmax(logits_sw, dim=1)
-        pred = probs.argmax(dim=1)  # [1,D,H,W]
-
+        fg = probs[:, 1]  # foreground probs [1,D,H,W]
+        pred = (fg > args.prob_thresh).long()  # [1,D,H,W]
+        if pred.sum() == 0 and 0.5 <= args.empty_fallback_q < 1.0:
+            q = torch.quantile(fg, args.empty_fallback_q)
+            pred = (fg >= q).long()
         # Métricas rápidas (Dice binario en ROI) - opcional, para logging
         if label is not None:
             gt = (label[0, 0] > 0).to(torch.uint8).cpu().numpy()
