@@ -213,11 +213,8 @@ if __name__ == "__main__":
     tf = Compose([
         LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
-        ScaleIntensityRanged(
-            keys=["image"], a_min=-1000, a_max=2000,
-            b_min=0.0, b_max=1.0, clip=True
-        ),
-        # track_meta=True -> MetaTensor con .meta, y usualmente mantiene *_meta_dict
+        ScaleIntensityRanged(keys=["image"], a_min=-1000, a_max=2000, b_min=0.0, b_max=1.0, clip=True),
+        SpatialPadd(keys=["image","label"], spatial_size=tuple(args.roi), method="end"),  # <- nuevo
         EnsureTyped(keys=["image", "label"], track_meta=True),
     ])
 
