@@ -8,7 +8,7 @@ from monai.utils import set_determinism
 from monai.inferers import SlidingWindowInferer
 from monai.data import Dataset
 from monai.transforms import (
-    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, EnsureTyped
+    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, SpatialPadd, EnsureTyped
 )
 
 from light_training.trainer import Trainer
