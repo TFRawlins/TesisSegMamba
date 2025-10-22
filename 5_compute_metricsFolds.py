@@ -96,18 +96,30 @@ def main():
 
     from glob import glob
 
+    # ==== construir lista de casos desde pred_dir ====
+    pred_paths = sorted(glob(os.path.join(args.pred_dir, "*.nii.gz")))
+    case_ids = [os.path.basename(p)[:-7] for p in pred_paths]  # quita ".nii.gz"
+    print("Total preds encontradas:", len(case_ids))
+    
     label_dir = os.path.join(args.data_dir, "labelsTr")
     assert os.path.isdir(label_dir), f"No existe labelsTr en {label_dir}"
     
-    label_paths = sorted(glob(os.path.join(label_dir, "*.nii.gz")))
-    print("Total casos test:", len(label_paths))
-    
     results = []
-    case_ids = []
     skipped = 0
     
-    for lab_path in tqdm(label_paths, total=len(label_paths)):
-        case = os.path.basename(lab_path).replace(".nii.gz", "")
+    # opcional: abre el log en modo append para detalles
+    log_path = os.path.join(args.out_dir, args.log_name)
+    logf = open(log_path, "w")
+    logf.write("# Log métricas con chequeos por caso\n")
+    
+    for case in tqdm(case_ids, total=len(case_ids)):
+        lab_path = os.path.join(label_dir, f"{case}.nii.gz")
+        if not os.path.exists(lab_path):
+            print(f"[SKIP] {case}: GT no encontrada en {lab_path}")
+            skipped += 1
+            continue
+    
+        # --- GT ---
         gt_nii = nib.load(lab_path)
         gt_xyz = gt_nii.get_fdata()
         zooms = gt_nii.header.get_zooms()[:3]
@@ -116,14 +128,16 @@ def main():
             skipped += 1
             continue
         gt = _as_uint8_01(gt)
+        gt_pos = int(gt.sum())
     
+        # --- Pred ---
         pred_path = os.path.join(args.pred_dir, f"{case}.nii.gz")
         if not os.path.exists(pred_path):
             print(f"[SKIP] {case}: pred no encontrada en {pred_path}")
             skipped += 1
             continue
     
-        pred_xyz = nib.load(pred_path).get_fdata()  # (X,Y,Z) float
+        pred_xyz = nib.load(pred_path).get_fdata()
         if pred_xyz.ndim == 4:
             pred_xyz = pred_xyz[0] if pred_xyz.shape[0] == 1 else np.argmax(pred_xyz, axis=0)
     
@@ -144,21 +158,27 @@ def main():
             skipped += 1
             continue
     
+        pred_pos = int(best_arr.sum())
+    
+        # logging por caso
+        logf.write(
+            f"{case}: dice={best_dice:.4f} hd95={best_hd:.2f} "
+            f"tag={best_tag} shape(gt/pred)={gt.shape}/{best_arr.shape} "
+            f"zooms={tuple(float(z) for z in zooms)} pos(gt/pred)={gt_pos}/{pred_pos}\n"
+        )
+    
         results.append([best_dice, best_hd])
-        case_ids.append(case)
-        # si quieres log detallado:
-        # log.append(f"[{case}] best={best_tag} dice={best_dice:.4f} hd95={best_hd:.2f}\n")
-
-
+    
+    logf.close()
+    
     if not results:
         print("❌ No se calcularon métricas (0 casos). Revisa rutas y nombres.")
-        with open(log_path, "w") as f:
-            f.writelines(log)
-        return
-
+        print(" 🪵 Log:", log_path)
+        raise SystemExit
+    
     arr = np.asarray(results, dtype=np.float32)
     np.save(os.path.join(args.out_dir, args.npy_name), arr)
-
+    
     # CSV por caso
     import csv
     csv_path = os.path.join(args.out_dir, args.csv_name)
@@ -167,10 +187,7 @@ def main():
         w.writerow(["Case ID", "Dice", "HD95"])
         for cid, (d, h) in zip(case_ids, arr):
             w.writerow([cid, float(d), float(h)])
-
-    with open(log_path, "w") as f:
-        f.writelines(log)
-
+    
     print("✅ Métricas ROI (autoorientadas) calculadas")
     print("Casos:", len(arr), f"(saltados: {skipped})")
     print("Dice promedio:", float(arr[:, 0].mean()))
@@ -179,6 +196,7 @@ def main():
     print(" -", os.path.join(args.out_dir, args.npy_name))
     print(" -", csv_path)
     print(" 🪵 Log:", log_path)
+
 
 if __name__ == "__main__":
     main()
