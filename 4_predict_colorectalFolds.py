@@ -6,14 +6,15 @@ import numpy as np
 
 from monai.utils import set_determinism
 from monai.inferers import SlidingWindowInferer
-from monai.data import Dataset, DataLoader
+from monai.data import Dataset
 from monai.transforms import (
-    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, EnsureTyped, Lambdad
+    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, EnsureTyped
 )
 
 from light_training.trainer import Trainer
 from light_training.prediction import Predictor
 from light_training.evaluation.metric import dice
+
 
 # ======= Setup =======
 set_determinism(123)
@@ -25,53 +26,30 @@ parser.add_argument("--data_dir", required=True, help="Ruta a nnUNet_raw/Dataset
 parser.add_argument("--ckpt", required=True, help="Ruta a best_model.pt (o final_model_*.pt)")
 parser.add_argument("--save_dir", required=True, help="Directorio base de salida para predicciones")
 parser.add_argument("--device", default="cuda:0")
-parser.add_argument("--roi", type=int, nargs=3, default=[128,128,128])
+parser.add_argument("--roi", type=int, nargs=3, default=[128, 128, 128])
 parser.add_argument("--sw_batch_size", type=int, default=2)
 parser.add_argument("--overlap", type=float, default=0.5)
-parser.add_argument("--mirror_axes", type=int, nargs="*", default=[0,1,2])
-
+parser.add_argument("--mirror_axes", type=int, nargs="*", default=[0, 1, 2])
 # Folds
 parser.add_argument("--fold", type=int, default=0, help="Fold index [0..4]")
 parser.add_argument("--fold_lists_dir", required=True, help="Carpeta con fold{n}_train.txt y fold{n}_val.txt")
 args = parser.parse_args()
 
+
 # ======= Utils =======
 def _as_str_path(p):
-    # p puede ser str o [str]; devolvemos str
+    """p puede ser str o [str]; devolvemos str o '' (nunca None)."""
     if isinstance(p, (list, tuple)):
-        return p[0] if p else None
-    return p
+        return str(p[0]) if len(p) > 0 else ""
+    return str(p) if p is not None else ""
 
-def _get_ref_affine_and_header(item):
-    """
-    Intenta recuperar affine/header reales desde meta de label o image.
-    Prioriza label; si no, usa image. Devuelve (affine, header, ref_path_str).
-    """
-    import numpy as np
-    affine = None
-    header = None
-    ref_path = None
-
-    for key in ("label", "image"):
-        mkey = f"{key}_meta_dict"
-        if mkey in item:
-            meta = item[mkey]
-            ref_path = _as_str_path(meta.get("filename_or_obj"))
-            # MONAI suele guardar 'affine' u 'original_affine'
-            aff = meta.get("affine") or meta.get("original_affine")
-            if aff is not None:
-                affine = np.array(aff, dtype=float)
-            # Opcional: si tienes spacing en meta, puedes inyectarlo al header
-            # con nibabel más abajo (header.set_zooms(...))
-            break
-
-    return affine, header, ref_path
 
 def _load_holdout_ids(fold_lists_dir: str, fold: int):
     p = os.path.join(fold_lists_dir, f"fold{fold}_val.txt")
     assert os.path.isfile(p), f"No existe {p}"
     with open(p) as f:
         return [l.strip() for l in f if l.strip()]
+
 
 def _build_samples(data_dir: str, ids):
     imdir = os.path.join(data_dir, "imagesTr")
@@ -90,6 +68,7 @@ def _build_samples(data_dir: str, ids):
         else:
             print(f"[WARN] Saltando {cid}: faltan paths (img={img}, label?={lab})", file=sys.stderr)
     return samples
+
 
 # ======= Predictor Trainer =======
 class ColorectalPredict(Trainer):
@@ -111,22 +90,22 @@ class ColorectalPredict(Trainer):
         model = SegMamba(
             in_chans=1,
             out_chans=2,
-            depths=[2,2,2,2],
+            depths=[2, 2, 2, 2],
             feat_size=[48, 96, 192, 384]
         )
 
+        # Carga robusta del checkpoint
         sd = torch.load(args.ckpt, map_location="cpu")
         if isinstance(sd, dict) and "state_dict" in sd:
             sd = sd["state_dict"]
-        # normalizar nombres (remover "module.")
         if isinstance(sd, dict):
-            sd = { (k[7:] if k.startswith("module.") else k): v for k, v in sd.items() }
+            sd = {(k[7:] if k.startswith("module.") else k): v for k, v in sd.items()}
 
         res = model.load_state_dict(sd, strict=False)
         print(f"[CKPT] missing={len(res.missing_keys)} unexpected={len(res.unexpected_keys)}")
-        if len(res.missing_keys) < 15:
+        if res.missing_keys:
             print("[CKPT] missing keys sample:", res.missing_keys[:10])
-        if len(res.unexpected_keys) < 15:
+        if res.unexpected_keys:
             print("[CKPT] unexpected keys sample:", res.unexpected_keys[:10])
 
         model.eval()
@@ -148,72 +127,74 @@ class ColorectalPredict(Trainer):
         import torch.nn.functional as F
         import nibabel as nib
         import numpy as _np
-    
+
         image, label, properties = self.get_input(batch)
         model, predictor = self.define_model()
         model.to(args.device)
-    
+
         # case_id
-        case_name = properties["name"][0] if isinstance(properties["name"], list) else str(properties["name"])
+        case_name = properties.get("name", "case_0")
+        case_name = case_name[0] if isinstance(case_name, list) else case_name
+        case_name = str(case_name)
         print(f"\n[CASE] {case_name}")
-    
+
         # Forward SW + mirror
         x = image.float()
         print("[INPUT] shape:", tuple(x.shape),
               "min:", float(x.min()), "max:", float(x.max()),
               "mean:", float(x.mean()), "std:", float(x.std()))
-    
+
         with torch.amp.autocast(device_type="cuda", enabled=("cuda" in args.device)):
             logits_sw = predictor.maybe_mirror_and_predict(image, model, device=args.device)
         if logits_sw.dim() == 4:  # [C,D,H,W] -> [1,C,D,H,W]
             logits_sw = logits_sw.unsqueeze(0)
-    
+
         # Ajuste a shape del label si existe (para calcular métricas en el mismo ROI)
         if label is not None:
             target_shape = tuple(label.shape[-3:])
         else:
             target_shape = tuple(logits_sw.shape[-3:])
-    
+
         if tuple(logits_sw.shape[-3:]) != target_shape:
             logits_sw = F.interpolate(logits_sw, size=target_shape, mode="trilinear", align_corners=False)
-    
+
         probs = torch.softmax(logits_sw, dim=1)
         pred = probs.argmax(dim=1)  # [1,D,H,W]
-    
+
         # Métricas rápidas (Dice binario en ROI) - opcional, para logging
         if label is not None:
-            gt = (label[0,0] > 0).to(torch.uint8).cpu().numpy()
+            gt = (label[0, 0] > 0).to(torch.uint8).cpu().numpy()
             pr = pred[0].to(torch.uint8).cpu().numpy()
             d = float(dice(pr, gt)) if (gt.sum() > 0 or pr.sum() > 0) else 1.0
             print(f"[ROI] Dice clase 1 = {d:.4f}  (pos_pred={int(pr.sum())}, pos_gt={int(gt.sum())})")
-    
+
         # ---- Guardado NIfTI con affine/header reales ----
         out_np = pred[0].cpu().numpy().astype(np.uint8)
         out_dir = os.path.join(args.save_dir, f"fold{args.fold}")
         os.makedirs(out_dir, exist_ok=True)
-        
-        affine, header, ref_path = _get_ref_affine_and_header(item=properties if isinstance(properties, dict) else {})
-        
-        import nibabel as nib
-        import numpy as _np
-        
+
+        # Referencia: primero label_path, si no existe usa img_path
+        ref_path = properties.get("label_path") or properties.get("img_path")
+        ref_path = _as_str_path(ref_path)
+        affine, header = None, None
+        try:
+            if ref_path and os.path.isfile(ref_path):
+                ref_nii = nib.load(ref_path)
+                affine, header = ref_nii.affine, ref_nii.header
+            else:
+                if ref_path:
+                    print(f"[WARN] ref_path no es archivo legible: '{ref_path}' -> uso identidad")
+        except Exception as e:
+            print(f"[WARN] no se pudo leer referencia '{ref_path}': {e} -> uso identidad")
+
         if affine is None:
-            # último recurso: identidad (evitar, pero mejor que crashear)
             affine = _np.eye(4)
-        
+
         out_nii = nib.Nifti1Image(out_np, affine=affine, header=header)
-        
-        # Si quieres intentar setear spacing cuando no hubo header/affine:
-        # spacing = properties.get("spacing") or item["image_meta_dict"].get("pixdim", None)
-        # if spacing is not None:
-        #     try: out_nii.header.set_zooms(tuple(spacing))
-        #     except: pass
-        
         save_path = os.path.join(out_dir, f"{case_name}.nii.gz")
         nib.save(out_nii, save_path)
         print(f"[SAVE] {save_path} (ref={ref_path})")
 
-    
         return 0
 
 
@@ -227,60 +208,52 @@ if __name__ == "__main__":
     samples = _build_samples(args.data_dir, holdout_ids)
     assert len(samples) > 0, "No hay muestras en hold-out. Revisa rutas e IDs."
 
-    # 3) Transforms (sin augmentations) + renombre de claves a data/seg/properties
+    # 3) Transforms (sin augmentations). Mantener meta sin romper *_meta_dict.
     tf = Compose([
-        LoadImaged(keys=["image", "label"]),  # inyecta *_meta_dict
+        LoadImaged(keys=["image", "label"]),
         EnsureChannelFirstd(keys=["image", "label"]),
         ScaleIntensityRanged(
             keys=["image"], a_min=-1000, a_max=2000,
             b_min=0.0, b_max=1.0, clip=True
         ),
-        # Mantener meta como MetaTensor (con .meta) y NO borrar *_meta_dict
+        # track_meta=True -> MetaTensor con .meta, y usualmente mantiene *_meta_dict
         EnsureTyped(keys=["image", "label"], track_meta=True),
     ])
 
-
-
-    def _get_path(item, key: str):
+    def _get_path_from_item(item, key: str):
         """
         Devuelve la ruta del archivo desde:
         1) item[f"{key}_meta_dict"]["filename_or_obj"] si existe, o
         2) item[key].meta["filename_or_obj"] si es MetaTensor, o
-        3) None si no está disponible.
+        3) '' si no está disponible.
         """
-        # Opción 1: *_meta_dict
         meta_key = f"{key}_meta_dict"
-        if meta_key in item and "filename_or_obj" in item[meta_key]:
-            return item[meta_key]["filename_or_obj"]
-    
-        # Opción 2: MetaTensor.meta
+        if meta_key in item and isinstance(item[meta_key], dict):
+            if "filename_or_obj" in item[meta_key]:
+                return _as_str_path(item[meta_key]["filename_or_obj"])
         v = item.get(key, None)
         if hasattr(v, "meta") and isinstance(getattr(v, "meta"), dict):
             if "filename_or_obj" in v.meta:
-                return v.meta["filename_or_obj"]
-    
-        return None
-    
-    
+                return _as_str_path(v.meta["filename_or_obj"])
+        return ""
+
     class _WrapDataset(Dataset):
         def __getitem__(self, index):
-            item = super().__getitem__(index)
+            item = super().__getitem__(index)  # aplica transforms
             data = item["image"]
-            seg  = item["label"]
+            seg = item["label"]
+
+            # IMPORTANTÍSIMO: no meter Nones en properties -> usar strings vacíos.
             props = {
-                "name": item.get("case_id", f"case_{index}"),
-                # guarda también metadatos completos para el saver
-                "image_meta_dict": item.get("image_meta_dict"),
-                "label_meta_dict": item.get("label_meta_dict"),
-                "img_path": _get_path(item, "image"),
-                "label_path": _get_path(item, "label"),
+                "name": str(item.get("case_id", f"case_{index}")),
+                "img_path": _get_path_from_item(item, "image"),
+                "label_path": _get_path_from_item(item, "label"),
             }
+            # Nada de image_meta_dict/label_meta_dict aquí para evitar Nones en collate.
+
             return {"data": data, "seg": seg, "properties": props}
-    
-    # Crea directamente el dataset envuelto (no uses base_ds.data/transform)
+
     ds = _WrapDataset(data=samples, transform=tf)
 
-    
     predictor_trainer = ColorectalPredict(device=args.device)
     predictor_trainer.validation_single_gpu(ds)
-
