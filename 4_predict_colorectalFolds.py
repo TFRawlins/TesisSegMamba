@@ -160,12 +160,8 @@ class ColorectalPredict(Trainer):
         if tuple(logits_sw.shape[-3:]) != target_shape:
             logits_sw = F.interpolate(logits_sw, size=target_shape, mode="trilinear", align_corners=False)
 
-        probs = torch.softmax(logits_sw, dim=1)
-        fg = probs[:, 1]  # foreground probs [1,D,H,W]
-        pred = (fg > args.prob_thresh).long()  # [1,D,H,W]
-        if pred.sum() == 0 and 0.5 <= args.empty_fallback_q < 1.0:
-            q = torch.quantile(fg, args.empty_fallback_q)
-            pred = (fg >= q).long()
+        pred = torch.argmax(logits_sw, dim=1).to(torch.uint8)
+
         # Métricas rápidas (Dice binario en ROI) - opcional, para logging
         if label is not None:
             gt = (label[0, 0] > 0).to(torch.uint8).cpu().numpy()
