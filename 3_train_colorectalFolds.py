@@ -296,7 +296,7 @@ class ColorectalVesselsTrainer(Trainer):
             self.model.train()
             for batch in train_loader:
                 image = batch["image"].to(self.device, non_blocking=True)
-                label = batch["label"][:, 0].long().to(self.device, non_blocking=True)
+                label = batch["label"].long().to(self.device, non_blocking=True)
 
                 self.optimizer.zero_grad(set_to_none=True)
                 with autocast_ctx(dtype=torch.float16):
@@ -323,13 +323,13 @@ class ColorectalVesselsTrainer(Trainer):
                 with torch.no_grad():
                     for batch in val_loader:
                         img = batch["image"].to(self.device, non_blocking=True)
-                        lab = batch["label"][:, 0].long().to(self.device, non_blocking=True)
+                        lab = batch["label"].long().to(self.device, non_blocking=True)
 
                         logits = self.window_infer(img, self.model)   # [B, C, D, H, W]
                         pred = torch.argmax(logits, dim=1)            # [B, D, H, W]
 
                         p_np = pred.detach().cpu().numpy().astype(np.uint8)
-                        g_np = lab.detach().cpu().numpy().astype(np.uint8)
+                        g_np = lab[:, 0].detach().cpu().numpy().astype(np.uint8)
                         for p, g in zip(p_np, g_np):
                             d = dice(p, g) if (p.sum() > 0 or g.sum() > 0) else 1.0
                             if isinstance(d, np.ndarray):
