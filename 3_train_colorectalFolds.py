@@ -1,5 +1,4 @@
 import os
-import re
 import sys
 import json
 import argparse
@@ -8,46 +7,27 @@ from typing import List, Tuple
 
 import numpy as np
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler as LegacyGradScaler
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from monai.utils import set_determinism
 from monai.transforms import (
     Compose,
-    LoadImaged,
-    EnsureChannelFirstd,
-    ScaleIntensityRanged,
-    RandFlipd,
-    RandRotate90d,
-    RandGaussianNoised,
-    SpatialPadd,
     EnsureTyped,
+    CropForegroundd,
+    SpatialPadd,
+    RandFlipd,
+    RandAffined,
+    RandCropByPosNegLabeld,
 )
-from monai.data import Dataset, CacheDataset, list_data_collate
+from monai.data import Dataset as MonaiDataset, CacheDataset, list_data_collate
 from monai.inferers import SlidingWindowInferer
 
 # --- MONAI seeding overflow hardening (previene OverflowError: 2**32) ---
 import numpy as _np
 import monai.transforms.compose as _monai_comp
-SAFE_MAX = (1 << 32) - 1  # 4294967295
+SAFE_MAX = (1 << 32) - 1
 _monai_comp.get_seed = lambda: 123
-
-from contextlib import nullcontext
-
-def autocast_ctx(dtype=torch.float16):
-    if torch.cuda.is_available():
-        if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
-            return torch.amp.autocast("cuda", dtype=dtype)
-        try:
-            from torch.cuda.amp import autocast as autocast_legacy
-            return autocast_legacy(dtype=dtype)
-        except Exception:
-            return nullcontext()
-    else:
-        return nullcontext()
-
 
 def _safe_set_random_state(self, seed=None, state=None):
     try:
@@ -66,21 +46,19 @@ def _safe_set_random_state(self, seed=None, state=None):
         except Exception:
             pass
     return self
-
 _monai_comp.Compose.set_random_state = _safe_set_random_state
 # --- end hardening ---
 
-from monai.transforms import RandCropByPosNegLabeld
 from light_training.trainer import Trainer
 from light_training.evaluation.metric import dice
 from light_training.utils.files_helper import save_new_model_and_delete_last
 
 # =====================
-# Args
+# Args (SIN agregar nuevos)
 # =====================
 parser = argparse.ArgumentParser()
 parser.add_argument("--exp_name", default="colorectal_folds")
-parser.add_argument("--data_dir", required=True, help="/home/.../data_nnUnet/nnUNet_raw/Dataset001_Colorectal")
+parser.add_argument("--data_dir", required=True, help="/home/.../data/colorectal/fullres/colorectal")
 parser.add_argument("--save_dir", default=None)
 parser.add_argument("--epochs", type=int, default=200)
 parser.add_argument("--batch_size", type=int, default=2)
@@ -89,10 +67,10 @@ parser.add_argument("--sw_batch_size", type=int, default=1)
 parser.add_argument("--fold", type=int, default=0, help="Fold index [0-4]")
 parser.add_argument(
     "--fold_lists_dir",
-    default="/home/trawlins/tesis/data/colorectal/fold_lists",
-    help="Folder with fold{n}_train.txt and fold{n}_val.txt",
+    required=True,
+    help="Carpeta con fold{n}_train.txt y fold{n}_val.txt"
 )
-parser.add_argument("--val_ratio_internal", type=float, default=0.1, help="Fraction of train IDs for internal val")
+parser.add_argument("--val_ratio_internal", type=float, default=0.1, help="Porción del train para validación interna")
 # ROI / workers
 parser.add_argument("--roi", type=int, nargs=3, default=[128, 128, 128])
 parser.add_argument("--num_workers", type=int, default=0)  # 0 para errores legibles
@@ -137,7 +115,7 @@ logging.info(f"device={device} | num_gpus={num_gpus} | epochs={max_epoch} | batc
 logging.info(f"ROI_SIZE={ROI_SIZE}")
 
 # =====================
-# Helpers for folds & IO
+# Folds & Dataset (FULLRES .npy)
 # =====================
 def load_fold_ids(fold_lists_dir: str, fold: int) -> Tuple[List[str], List[str]]:
     p_tr = os.path.join(fold_lists_dir, f"fold{fold}_train.txt")
@@ -160,64 +138,81 @@ def split_internal(train_ids_all: List[str], val_ratio=0.1, seed=123) -> Tuple[L
     val_ids = [train_ids_all[j] for j in idx[cut:]]
     return train_ids, val_ids
 
-def build_sample_list_from_ids(data_dir: str, ids: List[str]) -> List[dict]:
+class FullresArrayDataset(Dataset):
     """
-    Espera layout nnU-Net-like:
-      data_dir/
-        imagesTr/<ID>_0000.nii.gz
-        labelsTr/<ID>.nii.gz (o variantes: _gt/_seg)
+    Lee {ID}.npy (imagen) y {ID}_seg.npy (label) desde data_dir.
+    Espera que la imagen esté ya reorientada/remuestreada por el preprocesado.
+    Devuelve dict con keys 'image' (float32) y 'label' (int64, con canal 1).
     """
-    im_dir = os.path.join(data_dir, "imagesTr")
-    gt_dir = os.path.join(data_dir, "labelsTr")
+    def __init__(self, ids: List[str], data_dir: str):
+        self.ids = ids
+        self.data_dir = data_dir
 
-    samples = []
+    def __len__(self):
+        return len(self.ids)
+
+    def __getitem__(self, i):
+        cid = self.ids[i]
+        img_p = os.path.join(self.data_dir, f"{cid}.npy")
+        seg_p = os.path.join(self.data_dir, f"{cid}_seg.npy")
+        if not (os.path.isfile(img_p) and os.path.isfile(seg_p)):
+            raise FileNotFoundError(f"[fullres] Falta para ID {cid}: {img_p} / {seg_p}")
+
+        img = np.load(img_p)  # (Z,Y,X) o (C,Z,Y,X)
+        seg = np.load(seg_p)  # (Z,Y,X) o (C,Z,Y,X)
+
+        if img.ndim == 3:  # (Z,Y,X) -> (1,Z,Y,X)
+            img = img[None, ...]
+        if seg.ndim == 3:
+            seg = seg[None, ...]
+        # Tipos
+        img = img.astype(np.float32, copy=False)
+        seg = seg.astype(np.int64,  copy=False)
+
+        return {"image": img, "label": seg, "case_id": cid}
+
+def filter_existing_ids(ids: List[str], data_dir: str) -> List[str]:
+    ok = []
     for cid in ids:
-        img_p = os.path.join(im_dir, f"{cid}_0000.nii.gz")
-        cand_labels = [
-            os.path.join(gt_dir, f"{cid}.nii.gz"),
-            os.path.join(gt_dir, f"{cid}_gt.nii.gz"),
-            os.path.join(gt_dir, f"{cid}_seg.nii.gz"),
-        ]
-        lab_p = next((p for p in cand_labels if os.path.isfile(p)), None)
-        if not (os.path.isfile(img_p) and lab_p and os.path.isfile(lab_p)):
-            logging.warning(f"Saltando ID {cid}: no se encontró imagen o label. img={img_p} label={lab_p}")
-            continue
-        samples.append({"image": img_p, "label": lab_p, "case_id": cid})
-    return samples
+        if os.path.isfile(os.path.join(data_dir, f"{cid}.npy")) and \
+           os.path.isfile(os.path.join(data_dir, f"{cid}_seg.npy")):
+            ok.append(cid)
+        else:
+            logging.warning(f"[skip] ID {cid}: faltan .npy en {data_dir}")
+    return ok
 
 # =====================
-# Datasets & Transforms (MONAI)
+# Transforms (SIN re-remuestrear)
 # =====================
-# Train: sampler foreground-aware
 train_transforms = Compose([
-    LoadImaged(keys=["image", "label"]),
-    EnsureChannelFirstd(keys=["image", "label"]),
-    ScaleIntensityRanged(keys=["image"], a_min=-1000, a_max=2000, b_min=0.0, b_max=1.0, clip=True),
+    EnsureTyped(keys=["image", "label"], dtype=("float32", "int64")),
 
-    SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="end"),
-    RandFlipd(keys=["image", "label"], prob=0.2, spatial_axis=0),
-    RandRotate90d(keys=["image", "label"], prob=0.2, max_k=3),
-    RandGaussianNoised(keys=["image"], prob=0.1),
+    # Recorte a región de interés y relleno simétrico:
+    CropForegroundd(keys=["image", "label"], source_key="image", margin=8),
+    SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="symmetric"),
 
-    RandCropByPosNegLabeld(
-        keys=["image", "label"],
-        label_key="label",
-        spatial_size=ROI_SIZE,
-        pos=1, neg=1,
-        num_samples=1,
-        image_key="image",
-        image_threshold=0,
+    # Augmentations 3D básicas
+    RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
+    RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
+    RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
+    RandAffined(
+        keys=["image", "label"], prob=0.2,
+        rotate_range=(0.1, 0.1, 0.1), scale_range=(0.1, 0.1, 0.1),
+        mode=("bilinear", "nearest")
     ),
-    EnsureTyped(keys=["image", "label"]),
+
+    # Sampler foreground-aware
+    RandCropByPosNegLabeld(
+        keys=["image", "label"], label_key="label",
+        spatial_size=ROI_SIZE, pos=1, neg=1,
+        num_samples=2, image_key="image"
+    ),
 ])
 
-# Val: volumen completo con SWI (solo pad)
 val_transforms = Compose([
-    LoadImaged(keys=["image", "label"]),
-    EnsureChannelFirstd(keys=["image", "label"]),
-    ScaleIntensityRanged(keys=["image"], a_min=-1000, a_max=2000, b_min=0.0, b_max=1.0, clip=True),
-    SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="end"),
-    EnsureTyped(keys=["image", "label"]),
+    EnsureTyped(keys=["image", "label"], dtype=("float32", "int64")),
+    CropForegroundd(keys=["image", "label"], source_key="image", margin=8),
+    SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="symmetric"),
 ])
 
 # =====================
@@ -228,6 +223,8 @@ class ColorectalVesselsTrainer(Trainer):
                  logdir="./logs/", master_ip='localhost', master_port=17750, training_script="train.py"):
         super().__init__(env_type, max_epochs, batch_size, device, val_every, num_gpus,
                          logdir, master_ip, master_port, training_script)
+
+        # TensorBoard
         self.writer = getattr(self, "writer", None)
         if self.writer is None:
             try:
@@ -238,10 +235,10 @@ class ColorectalVesselsTrainer(Trainer):
                 self.writer = None
                 logging.warning(f"No se pudo iniciar TensorBoard SummaryWriter: {e}")
 
+        # Inferencia deslizante con mayor solape (mejor en bordes finos)
         self.window_infer = SlidingWindowInferer(
-            roi_size=ROI_SIZE, sw_batch_size=args.sw_batch_size, overlap=0.5
+            roi_size=ROI_SIZE, sw_batch_size=args.sw_batch_size, overlap=0.75
         )
-        self.augmentation = True
 
         from model_segmamba.segmamba import SegMamba
         self.model = SegMamba(
@@ -255,54 +252,51 @@ class ColorectalVesselsTrainer(Trainer):
 
         self.patch_size = ROI_SIZE
         self.best_mean_dice = 0.0
+
         self.optimizer = torch.optim.SGD(
             self.model.parameters(), lr=1e-2, weight_decay=3e-5, momentum=0.99, nesterov=True
         )
-        # Scheduler polinómico (si tu Trainer no lo crea por dentro)
         self.scheduler_type = "poly"
 
-        # Pérdida (Dice+CE) — mejor para clases pequeñas
         from monai.losses import DiceCELoss
         self.loss_fn = DiceCELoss(
-            to_onehot_y=True, softmax=True, weight=None,
+            to_onehot_y=True, softmax=True,
             include_background=False, lambda_dice=1.0, lambda_ce=1.0
         )
 
     def fit_monai(self, train_ds, val_ds, num_workers: int = 0, val_every: int = 5):
-        # TRAIN LOADER: batches >1 funcionan porque ya cropeas a ROI fijo
         train_loader = DataLoader(
             train_ds, batch_size=self.batch_size, shuffle=True,
             num_workers=num_workers, pin_memory=True, collate_fn=list_data_collate
         )
-
-        # VAL LOADER: por volumen completo con SWI => batch_size = 1 (clave para evitar stack de tamaños distintos)
         val_loader = DataLoader(
             val_ds, batch_size=1, shuffle=False,
             num_workers=num_workers, pin_memory=True, collate_fn=list_data_collate
         )
 
         self.model.to(self.device)
-        scaler = getattr(self, "grad_scaler", None)
-        if scaler is None:
-            try:
-                scaler = torch.amp.GradScaler('cuda')  # API nueva
-            except Exception:
-                from torch.cuda.amp import GradScaler   # fallback legacy
-                scaler = GradScaler()
-            self.grad_scaler = scaler
+
+        # GradScaler (AMP)
+        try:
+            scaler = torch.amp.GradScaler('cuda')
+        except Exception:
+            from torch.cuda.amp import GradScaler
+            scaler = GradScaler()
+        self.grad_scaler = scaler
 
         global_step = 0
         for epoch in range(self.max_epochs):
             self.epoch = epoch
             self.model.train()
+
             for batch in train_loader:
-                image = batch["image"].to(self.device, non_blocking=True)
-                label = batch["label"].long().to(self.device, non_blocking=True)
+                image = batch["image"].to(self.device, non_blocking=True)  # [B,1,D,H,W]
+                label = batch["label"].long().to(self.device, non_blocking=True)  # [B,1,D,H,W]
 
                 self.optimizer.zero_grad(set_to_none=True)
-                with autocast_ctx(dtype=torch.float16):
-                    logits = self.model(image)
-                    loss = self.loss_fn(logits, label)
+                with torch.amp.autocast(device_type="cuda", dtype=torch.float16, enabled=torch.cuda.is_available()):
+                    logits = self.model(image)           # [B,2,D,H,W]
+                    loss = self.loss_fn(logits, label)   # Dice+CE
 
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
@@ -320,22 +314,19 @@ class ColorectalVesselsTrainer(Trainer):
             if ((epoch + 1) % val_every) == 0 or (epoch + 1) == self.max_epochs:
                 self.model.eval()
                 dices = []
-                with torch.no_grad():
+                with torch.no_grad(), torch.amp.autocast(device_type="cuda", dtype=torch.float16, enabled=torch.cuda.is_available()):
                     for batch in val_loader:
-                        img = batch["image"].to(self.device, non_blocking=True)
-                        lab = batch["label"].long().to(self.device, non_blocking=True)
+                        img = batch["image"].to(self.device, non_blocking=True)     # [1,1,D,H,W]
+                        lab = batch["label"].long().to(self.device, non_blocking=True)  # [1,1,D,H,W]
 
-                        logits = self.window_infer(img, self.model)   # [B, C, D, H, W]
-                        pred = torch.argmax(logits, dim=1)            # [B, D, H, W]
+                        logits = self.window_infer(img, self.model)   # [1,2,D,H,W]
+                        pred = torch.argmax(logits, dim=1)            # [1,D,H,W]
 
                         p_np = pred.detach().cpu().numpy().astype(np.uint8)
                         g_np = lab[:, 0].detach().cpu().numpy().astype(np.uint8)
                         for p, g in zip(p_np, g_np):
                             d = dice(p, g) if (p.sum() > 0 or g.sum() > 0) else 1.0
-                            if isinstance(d, np.ndarray):
-                                d = float(d)
-                            elif torch.is_tensor(d):
-                                d = float(d.item())
+                            d = float(d if not torch.is_tensor(d) else d.item())
                             dices.append(d)
 
                 mean_dice = float(np.mean(dices)) if dices else 0.0
@@ -356,28 +347,41 @@ class ColorectalVesselsTrainer(Trainer):
 # Main
 # =====================
 if __name__ == "__main__":
-    # 1) Leer IDs de fold y hacer split interno (no tocar hold-out aquí)
+    # 1) Leer IDs de fold y hacer split interno (no tocar hold-out)
     train_ids_all, holdout_ids = load_fold_ids(args.fold_lists_dir, args.fold)
     train_ids, val_ids = split_internal(train_ids_all, args.val_ratio_internal, seed=123)
+
+    # 2) Filtrar IDs que existan en data_dir como .npy
+    train_ids = filter_existing_ids(train_ids, DATA_DIR)
+    val_ids   = filter_existing_ids(val_ids,   DATA_DIR)
     logging.info(f"[Fold {args.fold}] train_in={len(train_ids)} | val_in={len(val_ids)} | holdout(no tocar)={len(holdout_ids)}")
 
-    # 2) Construir listas de muestras y datasets MONAI
-    train_samples = build_sample_list_from_ids(DATA_DIR, train_ids)
-    val_samples = build_sample_list_from_ids(DATA_DIR, val_ids)
+    if len(train_ids) == 0:
+        raise RuntimeError(
+            f"No hay muestras de entrenamiento en {DATA_DIR}. "
+            f"Se esperan archivos {{ID}}.npy y {{ID}}_seg.npy por cada ID de los folds."
+        )
 
-    logging.info(f"train_samples={len(train_samples)} | val_samples={len(val_samples)}")
-    if len(train_samples) == 0:
-        raise RuntimeError("No hay muestras de entrenamiento. Asegúrate de que --data_dir tenga imagesTr/<ID>_0000.nii.gz y labelsTr/<ID>.nii.gz y que los IDs del fold existan.")
+    # 3) Datasets
+    train_base = FullresArrayDataset(train_ids, DATA_DIR)
+    val_base   = FullresArrayDataset(val_ids,   DATA_DIR)
 
     use_cache = True
     if use_cache:
-        train_ds = CacheDataset(data=train_samples, transform=train_transforms, cache_rate=1.0, num_workers=args.num_workers)
-        val_ds   = CacheDataset(data=val_samples,   transform=val_transforms,   cache_rate=1.0, num_workers=args.num_workers)
+        train_ds = CacheDataset(
+            data=[train_base[i] for i in range(len(train_base))],
+            transform=train_transforms, cache_rate=1.0, num_workers=args.num_workers
+        )
+        val_ds   = CacheDataset(
+            data=[val_base[i] for i in range(len(val_base))],
+            transform=val_transforms,   cache_rate=1.0, num_workers=args.num_workers
+        )
     else:
-        train_ds = Dataset(data=train_samples, transform=train_transforms)
-        val_ds   = Dataset(data=val_samples,   transform=val_transforms)
+        # Alternativa sin cache
+        train_ds = MonaiDataset(data=[train_base[i] for i in range(len(train_base))], transform=train_transforms)
+        val_ds   = MonaiDataset(data=[val_base[i]   for i in range(len(val_base))],   transform=val_transforms)
 
-    # 3) Trainer
+    # 4) Trainer
     trainer = ColorectalVesselsTrainer(
         env_type="pytorch",
         max_epochs=max_epoch,
@@ -390,7 +394,6 @@ if __name__ == "__main__":
         training_script=__file__,
     )
 
-    # 4) ENTRENAR
     logging.info("Datasets cargados. Iniciando entrenamiento...")
     trainer.fit_monai(train_ds, val_ds, num_workers=args.num_workers, val_every=5)
     logging.info("Entrenamiento finalizado.")
