@@ -25,7 +25,7 @@ from monai.transforms import (
     SpatialPadd,
     EnsureTyped,
 )
-from monai.data import Dataset, CacheDataset
+from monai.data import Dataset, CacheDataset, list_data_collate
 from monai.inferers import SlidingWindowInferer
 
 # --- MONAI seeding overflow hardening (prevents OverflowError: 2**32) ---
