@@ -273,11 +273,11 @@ class ColorectalVesselsTrainer(Trainer):
     def fit_monai(self, train_ds, val_ds, num_workers: int = 0, val_every: int = 5):
         train_loader = DataLoader(
             train_ds, batch_size=self.batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=True
+            num_workers=num_workers, pin_memory=True, collate_fn=list_data_collate
         )
         val_loader = DataLoader(
             val_ds, batch_size=self.batch_size, shuffle=False,
-            num_workers=num_workers, pin_memory=True
+            num_workers=num_workers, pin_memory=True, collate_fn=list_data_collate
         )
 
         self.model.to(self.device)
