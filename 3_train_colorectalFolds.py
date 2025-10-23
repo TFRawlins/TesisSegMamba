@@ -9,7 +9,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
-
 from monai.utils import set_determinism
 from monai.transforms import (
     Compose,
@@ -19,6 +18,7 @@ from monai.transforms import (
     RandFlipd,
     RandAffined,
     RandCropByPosNegLabeld,
+    Lambdad,
 )
 from monai.data import Dataset as MonaiDataset, CacheDataset, list_data_collate
 from monai.inferers import SlidingWindowInferer
@@ -184,10 +184,6 @@ def filter_existing_ids(ids: List[str], data_dir: str) -> List[str]:
 # =====================
 # Transforms (SIN re-remuestrear)
 # =====================
-from monai.transforms import (
-    Compose, EnsureTyped, CropForegroundd, SpatialPadd,
-    RandFlipd, RandAffined, RandCropByPosNegLabeld, Lambdad
-)
 
 train_transforms = Compose([
     EnsureTyped(keys=["image", "label"], dtype=("float32", "int64")),
