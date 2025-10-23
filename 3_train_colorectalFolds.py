@@ -28,7 +28,7 @@ from monai.transforms import (
 from monai.data import Dataset, CacheDataset, list_data_collate
 from monai.inferers import SlidingWindowInferer
 
-# --- MONAI seeding overflow hardening (prevents OverflowError: 2**32) ---
+# --- MONAI seeding overflow hardening (previene OverflowError: 2**32) ---
 import numpy as _np
 import monai.transforms.compose as _monai_comp
 SAFE_MAX = (1 << 32) - 1  # 4294967295
@@ -188,7 +188,7 @@ def build_sample_list_from_ids(data_dir: str, ids: List[str]) -> List[dict]:
 # =====================
 # Datasets & Transforms (MONAI)
 # =====================
-# Train: sampler foreground-aware (mejor para clases pequeñas)
+# Train: sampler foreground-aware
 train_transforms = Compose([
     LoadImaged(keys=["image", "label"]),
     EnsureChannelFirstd(keys=["image", "label"]),
@@ -208,11 +208,10 @@ train_transforms = Compose([
         image_key="image",
         image_threshold=0,
     ),
-
     EnsureTyped(keys=["image", "label"]),
 ])
 
-# Val: NO crops (validar en volumen completo con SW)
+# Val: volumen completo con SWI (solo pad)
 val_transforms = Compose([
     LoadImaged(keys=["image", "label"]),
     EnsureChannelFirstd(keys=["image", "label"]),
@@ -269,14 +268,16 @@ class ColorectalVesselsTrainer(Trainer):
             include_background=False, lambda_dice=1.0, lambda_ce=1.0
         )
 
-    # Entrenamiento con DataLoader de MONAI (sin batchgenerators)
     def fit_monai(self, train_ds, val_ds, num_workers: int = 0, val_every: int = 5):
+        # TRAIN LOADER: batches >1 funcionan porque ya cropeas a ROI fijo
         train_loader = DataLoader(
             train_ds, batch_size=self.batch_size, shuffle=True,
             num_workers=num_workers, pin_memory=True, collate_fn=list_data_collate
         )
+
+        # VAL LOADER: por volumen completo con SWI => batch_size = 1 (clave para evitar stack de tamaños distintos)
         val_loader = DataLoader(
-            val_ds, batch_size=self.batch_size, shuffle=False,
+            val_ds, batch_size=1, shuffle=False,
             num_workers=num_workers, pin_memory=True, collate_fn=list_data_collate
         )
 
@@ -301,7 +302,7 @@ class ColorectalVesselsTrainer(Trainer):
                 self.optimizer.zero_grad(set_to_none=True)
                 with autocast_ctx(dtype=torch.float16):
                     logits = self.model(image)
-                    loss = self.loss_fn(logits, label)  # <<< FIX: usar la loss definida
+                    loss = self.loss_fn(logits, label)
 
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
@@ -312,11 +313,10 @@ class ColorectalVesselsTrainer(Trainer):
                 if (global_step % 25) == 0:
                     logging.info(f"[train] epoch={epoch+1}/{self.max_epochs} step={global_step} loss={loss.item():.5f}")
 
-            # Scheduler por época (si existe)
             if hasattr(self, "scheduler") and self.scheduler is not None:
                 self.scheduler.step()
 
-            # Validación periódica — **volumen completo** con SW
+            # Validación periódica — volumen completo con SWI
             if ((epoch + 1) % val_every) == 0 or (epoch + 1) == self.max_epochs:
                 self.model.eval()
                 dices = []
@@ -324,6 +324,7 @@ class ColorectalVesselsTrainer(Trainer):
                     for batch in val_loader:
                         img = batch["image"].to(self.device, non_blocking=True)
                         lab = batch["label"].long().to(self.device, non_blocking=True)
+
                         logits = self.window_infer(img, self.model)   # [B, C, D, H, W]
                         pred = torch.argmax(logits, dim=1)            # [B, D, H, W]
 
@@ -376,7 +377,7 @@ if __name__ == "__main__":
         train_ds = Dataset(data=train_samples, transform=train_transforms)
         val_ds   = Dataset(data=val_samples,   transform=val_transforms)
 
-    # 3) Trainer (mismo optimizador/AMP/guardados)
+    # 3) Trainer
     trainer = ColorectalVesselsTrainer(
         env_type="pytorch",
         max_epochs=max_epoch,
@@ -389,7 +390,7 @@ if __name__ == "__main__":
         training_script=__file__,
     )
 
-    # 4) ENTRENAR con BYPASS (sin batchgenerators)
+    # 4) ENTRENAR
     logging.info("Datasets cargados. Iniciando entrenamiento...")
     trainer.fit_monai(train_ds, val_ds, num_workers=args.num_workers, val_every=5)
     logging.info("Entrenamiento finalizado.")
