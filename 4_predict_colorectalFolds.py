@@ -82,47 +82,29 @@ class ColorectalPredict(Trainer):
         )
         self.patch_size = args.roi
         self.augmentation = False  # sin augment en inferencia
-
+        from model_segmamba.segmamba import SegMamba
+        # --- Modelo único y carga estricta del ckpt ---
+        self.model = SegMamba(in_chans=1, out_chans=2, depths=[2,2,2,2], feat_size=[48,96,192,384])
+        sd = torch.load(args.ckpt, map_location="cpu")
+        if isinstance(sd, dict) and "state_dict" in sd:
+            sd = sd["state_dict"]
+        sd = {(k[7:] if isinstance(k, str) and k.startswith("module.") else k): v for k, v in sd.items()}
+        # ¡Importante!: strict=True para no “silenciar” capas sin cargar
+        self.model.load_state_dict(sd, strict=True)
+        self.model.eval().to(args.device)
+        self.inferer = SlidingWindowInferer(
+            roi_size=args.roi, sw_batch_size=args.sw_batch_size,
+            overlap=args.overlap, progress=True, mode="gaussian"
+        )
+        self.predictor = Predictor(window_infer=self.inferer, mirror_axes=args.mirror_axes)
+    
     def get_input(self, batch):
         # Estructura alineada con light_training: data/seg/properties
         return batch["data"], batch.get("seg", None), batch["properties"]
 
     def define_model(self):
-        from model_segmamba.segmamba import SegMamba
-        model = SegMamba(
-            in_chans=1,
-            out_chans=2,
-            depths=[2, 2, 2, 2],
-            feat_size=[48, 96, 192, 384]
-        )
-
-        # Carga robusta del checkpoint
-        sd = torch.load(args.ckpt, map_location="cpu")
-        if isinstance(sd, dict) and "state_dict" in sd:
-            sd = sd["state_dict"]
-        if isinstance(sd, dict):
-            sd = {(k[7:] if k.startswith("module.") else k): v for k, v in sd.items()}
-
-        res = model.load_state_dict(sd, strict=False)
-        print(f"[CKPT] missing={len(res.missing_keys)} unexpected={len(res.unexpected_keys)}")
-        if res.missing_keys:
-            print("[CKPT] missing keys sample:", res.missing_keys[:10])
-        if res.unexpected_keys:
-            print("[CKPT] unexpected keys sample:", res.unexpected_keys[:10])
-
-        model.eval()
-
-        inferer = SlidingWindowInferer(
-            roi_size=args.roi,
-            sw_batch_size=args.sw_batch_size,
-            overlap=args.overlap,
-            progress=True,
-            mode="gaussian",
-        )
-        predictor = Predictor(window_infer=inferer, mirror_axes=args.mirror_axes)
-
         os.makedirs(os.path.join(args.save_dir, f"fold{args.fold}"), exist_ok=True)
-        return model, predictor
+        return self.model, self.predictor
 
     @torch.no_grad()
     def validation_step(self, batch):
@@ -132,8 +114,6 @@ class ColorectalPredict(Trainer):
 
         image, label, properties = self.get_input(batch)
         model, predictor = self.define_model()
-        model.to(args.device)
-
         # case_id
         case_name = properties.get("name", "case_0")
         case_name = case_name[0] if isinstance(case_name, list) else case_name
@@ -161,7 +141,11 @@ class ColorectalPredict(Trainer):
             logits_sw = F.interpolate(logits_sw, size=target_shape, mode="trilinear", align_corners=False)
 
         pred = torch.argmax(logits_sw, dim=1).to(torch.uint8)
-
+        # --- Sanity prints de foreground ---
+        uniq = torch.unique(pred)
+        fg = int((pred[0] > 0).sum().item())
+        tot = int(pred[0].numel())
+        print(f"[PRED] unique={uniq.tolist()}  fg_vox={fg}/{tot}  fg_ratio={fg/max(tot,1):.8f}")
         # Métricas rápidas (Dice binario en ROI) - opcional, para logging
         if label is not None:
             gt = (label[0, 0] > 0).to(torch.uint8).cpu().numpy()
