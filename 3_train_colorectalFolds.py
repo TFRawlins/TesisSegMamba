@@ -184,14 +184,20 @@ def filter_existing_ids(ids: List[str], data_dir: str) -> List[str]:
 # =====================
 # Transforms (SIN re-remuestrear)
 # =====================
+from monai.transforms import (
+    Compose, EnsureTyped, CropForegroundd, SpatialPadd,
+    RandFlipd, RandAffined, RandCropByPosNegLabeld, Lambdad
+)
+
 train_transforms = Compose([
     EnsureTyped(keys=["image", "label"], dtype=("float32", "int64")),
 
-    # Recorte a región de interés y relleno simétrico:
+    # *** Fuerza label binario: cualquier valor >0 pasa a 1
+    Lambdad(keys=["label"], func=lambda x: (x > 0).astype(x.dtype)),
+
     CropForegroundd(keys=["image", "label"], source_key="image", margin=8),
     SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="symmetric"),
 
-    # Augmentations 3D básicas
     RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
     RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
     RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
@@ -201,19 +207,22 @@ train_transforms = Compose([
         mode=("bilinear", "nearest")
     ),
 
-    # Sampler foreground-aware
     RandCropByPosNegLabeld(
         keys=["image", "label"], label_key="label",
-        spatial_size=ROI_SIZE, pos=1, neg=1,
-        num_samples=2, image_key="image"
+        spatial_size=ROI_SIZE, pos=1, neg=1, num_samples=2, image_key="image"
     ),
 ])
 
 val_transforms = Compose([
     EnsureTyped(keys=["image", "label"], dtype=("float32", "int64")),
+
+    # *** Igual en validación
+    Lambdad(keys=["label"], func=lambda x: (x > 0).astype(x.dtype)),
+
     CropForegroundd(keys=["image", "label"], source_key="image", margin=8),
     SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="symmetric"),
 ])
+
 
 # =====================
 # Model & Trainer
