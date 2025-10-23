@@ -265,7 +265,7 @@ class ColorectalVesselsTrainer(Trainer):
         # Pérdida (Dice+CE) — mejor para clases pequeñas
         from monai.losses import DiceCELoss
         self.loss_fn = DiceCELoss(
-            to_onehot_y=True, softmax=True, ce_weight=None,
+            to_onehot_y=True, softmax=True, weight=None,
             include_background=False, lambda_dice=1.0, lambda_ce=1.0
         )
 
