@@ -324,7 +324,6 @@ class ColorectalVesselsTrainer(Trainer):
                     for batch in val_loader:
                         img = batch["image"].to(self.device, non_blocking=True)
                         lab = batch["label"].long().to(self.device, non_blocking=True)
-
                         logits = self.window_infer(img, self.model)   # [B, C, D, H, W]
                         pred = torch.argmax(logits, dim=1)            # [B, D, H, W]
 
