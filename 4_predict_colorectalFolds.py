@@ -3,18 +3,20 @@ import argparse
 import sys
 import torch
 import numpy as np
+import logging
+import pickle
+import json
 
 from monai.utils import set_determinism
 from monai.inferers import SlidingWindowInferer
-from monai.data import Dataset
+from monai.data import Dataset as MonaiDataset, list_data_collate
 from monai.transforms import (
-    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, SpatialPadd, EnsureTyped
+    Compose, EnsureTyped, SpatialPadd, Lambdad
 )
 
 from light_training.trainer import Trainer
 from light_training.prediction import Predictor
 from light_training.evaluation.metric import dice
-
 
 # ======= Setup =======
 set_determinism(123)
@@ -22,7 +24,7 @@ torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision("medium")
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", required=True, help="Ruta a nnUNet_raw/Dataset001_Colorectal")
+parser.add_argument("--data_dir", required=True, help="Carpeta FULLRES con {ID}.npy, {ID}_seg.npy, {ID}.pkl/.npz")
 parser.add_argument("--ckpt", required=True, help="Ruta a best_model.pt (o final_model_*.pt)")
 parser.add_argument("--save_dir", required=True, help="Directorio base de salida para predicciones")
 parser.add_argument("--device", default="cuda:0")
@@ -33,44 +35,102 @@ parser.add_argument("--mirror_axes", type=int, nargs="*", default=[0, 1, 2])
 # Folds
 parser.add_argument("--fold", type=int, default=0, help="Fold index [0..4]")
 parser.add_argument("--fold_lists_dir", required=True, help="Carpeta con fold{n}_train.txt y fold{n}_val.txt")
-parser.add_argument("--prob_thresh", type=float, default=0.40)
-parser.add_argument("--empty_fallback_q", type=float, default=0.999)
+parser.add_argument("--prob_thresh", type=float, default=0.40)         # (no usado aquí, se deja para compat)
+parser.add_argument("--empty_fallback_q", type=float, default=0.999)    # (no usado aquí, se deja para compat)
 args = parser.parse_args()
 
-
 # ======= Utils =======
-def _as_str_path(p):
-    """p puede ser str o [str]; devolvemos str o '' (nunca None)."""
-    if isinstance(p, (list, tuple)):
-        return str(p[0]) if len(p) > 0 else ""
-    return str(p) if p is not None else ""
-
-
 def _load_holdout_ids(fold_lists_dir: str, fold: int):
     p = os.path.join(fold_lists_dir, f"fold{fold}_val.txt")
     assert os.path.isfile(p), f"No existe {p}"
     with open(p) as f:
         return [l.strip() for l in f if l.strip()]
 
+def _find_meta_paths(data_dir: str, cid: str):
 
-def _build_samples(data_dir: str, ids):
-    imdir = os.path.join(data_dir, "imagesTr")
-    lbdir = os.path.join(data_dir, "labelsTr")
-    samples = []
+    pkl = os.path.join(data_dir, f"{cid}.pkl")
+    npz = os.path.join(data_dir, f"{cid}.npz")
+    img_ref = ""
+    lbl_ref = ""
+    try:
+        if os.path.isfile(pkl):
+            with open(pkl, "rb") as f:
+                d = pickle.load(f)
+            candidates_img = ["image_path", "img_path", "raw_image", "source_image", "image", "img"]
+            candidates_lbl = ["label_path", "raw_label", "source_label", "label", "seg"]
+            for k in candidates_img:
+                if k in d and isinstance(d[k], (str, list)):
+                    img_ref = d[k][0] if isinstance(d[k], list) and d[k] else d[k]
+                    break
+            for k in candidates_lbl:
+                if k in d and isinstance(d[k], (str, list)):
+                    lbl_ref = d[k][0] if isinstance(d[k], list) and d[k] else d[k]
+                    break
+        elif os.path.isfile(npz):
+            d = dict(np.load(npz, allow_pickle=True))
+            for k in ["image_path", "img_path", "raw_image", "source_image", "image", "img"]:
+                if k in d:
+                    v = d[k]
+                    img_ref = v.item() if isinstance(v, np.ndarray) else v
+                    break
+            for k in ["label_path", "raw_label", "source_label", "label", "seg"]:
+                if k in d:
+                    v = d[k]
+                    lbl_ref = v.item() if isinstance(v, np.ndarray) else v
+                    break
+    except Exception as e:
+        logging.warning(f"[meta] {cid}: no se pudo leer pkl/npz ({e})")
+    return str(img_ref or ""), str(lbl_ref or "")
+
+def _build_ids_existing(data_dir: str, ids):
+    ok = []
     for cid in ids:
-        img = os.path.join(imdir, f"{cid}_0000.nii.gz")
-        lab_candidates = [
-            os.path.join(lbdir, f"{cid}.nii.gz"),
-            os.path.join(lbdir, f"{cid}_gt.nii.gz"),
-            os.path.join(lbdir, f"{cid}_seg.nii.gz"),
-        ]
-        lab = next((p for p in lab_candidates if os.path.isfile(p)), None)
-        if os.path.isfile(img) and lab and os.path.isfile(lab):
-            samples.append({"image": img, "label": lab, "case_id": cid})
+        if os.path.isfile(os.path.join(data_dir, f"{cid}.npy")):
+            ok.append(cid)
         else:
-            print(f"[WARN] Saltando {cid}: faltan paths (img={img}, label?={lab})", file=sys.stderr)
-    return samples
+            print(f"[WARN] Saltando {cid}: falta {cid}.npy en {data_dir}", file=sys.stderr)
+    return ok
 
+# ======= Dataset FULLRES =======
+class FullresPredDataset(MonaiDataset):
+    """
+    Devuelve dict con:
+      image: np.float32 (1,D,H,W)
+      label: opcional np.int64 (1,D,H,W) si existe {ID}_seg.npy (para métrica rápida)
+      properties: dict con 'name', 'img_ref', 'lbl_ref'
+    """
+    def __init__(self, ids, data_dir, transform=None):
+        self.ids = ids
+        self.data_dir = data_dir
+        super().__init__(data=[], transform=transform)
+
+    def __len__(self):
+        return len(self.ids)
+
+    def __getitem__(self, index):
+        cid = self.ids[index]
+        img_p = os.path.join(self.data_dir, f"{cid}.npy")
+        seg_p = os.path.join(self.data_dir, f"{cid}_seg.npy")
+        if not os.path.isfile(img_p):
+            raise FileNotFoundError(f"Falta imagen para {cid}: {img_p}")
+        img = np.load(img_p)  # (Z,Y,X) o (C,Z,Y,X)
+        if img.ndim == 3:
+            img = img[None, ...]
+        img = img.astype(np.float32, copy=False)
+
+        sample = {"image": img, "case_id": cid}
+
+        if os.path.isfile(seg_p):
+            seg = np.load(seg_p)
+            if seg.ndim == 3:
+                seg = seg[None, ...]
+            sample["label"] = seg.astype(np.int64, copy=False)
+
+        img_ref, lbl_ref = _find_meta_paths(self.data_dir, cid)
+        sample["properties"] = {"name": cid, "img_ref": img_ref, "lbl_ref": lbl_ref}
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample
 
 # ======= Predictor Trainer =======
 class ColorectalPredict(Trainer):
@@ -83,24 +143,28 @@ class ColorectalPredict(Trainer):
         self.patch_size = args.roi
         self.augmentation = False  # sin augment en inferencia
         from model_segmamba.segmamba import SegMamba
-        # --- Modelo único y carga estricta del ckpt ---
         self.model = SegMamba(in_chans=1, out_chans=2, depths=[2,2,2,2], feat_size=[48,96,192,384])
         sd = torch.load(args.ckpt, map_location="cpu")
         if isinstance(sd, dict) and "state_dict" in sd:
             sd = sd["state_dict"]
+        # DataParallel friendly
         sd = {(k[7:] if isinstance(k, str) and k.startswith("module.") else k): v for k, v in sd.items()}
-        # ¡Importante!: strict=True para no “silenciar” capas sin cargar
+        # strict=True para no “silenciar” capas sin cargar
         self.model.load_state_dict(sd, strict=True)
         self.model.eval().to(args.device)
+
         self.inferer = SlidingWindowInferer(
             roi_size=args.roi, sw_batch_size=args.sw_batch_size,
-            overlap=args.overlap, progress=True, mode="gaussian"
+            overlap=args.overlap, mode="gaussian"
         )
         self.predictor = Predictor(window_infer=self.inferer, mirror_axes=args.mirror_axes)
-    
+
     def get_input(self, batch):
         # Estructura alineada con light_training: data/seg/properties
-        return batch["data"], batch.get("seg", None), batch["properties"]
+        img = batch["image"]          # [1,1,D,H,W] tras collate
+        seg = batch.get("label", None)
+        props = batch["properties"]
+        return img, seg, props
 
     def define_model(self):
         os.makedirs(os.path.join(args.save_dir, f"fold{args.fold}"), exist_ok=True)
@@ -110,17 +174,16 @@ class ColorectalPredict(Trainer):
     def validation_step(self, batch):
         import torch.nn.functional as F
         import nibabel as nib
-        import numpy as _np
 
         image, label, properties = self.get_input(batch)
         model, predictor = self.define_model()
+
         # case_id
         case_name = properties.get("name", "case_0")
         case_name = case_name[0] if isinstance(case_name, list) else case_name
         case_name = str(case_name)
         print(f"\n[CASE] {case_name}")
 
-        # Forward SW + mirror
         x = image.float()
         print("[INPUT] shape:", tuple(x.shape),
               "min:", float(x.min()), "max:", float(x.max()),
@@ -136,106 +199,73 @@ class ColorectalPredict(Trainer):
             target_shape = tuple(label.shape[-3:])
         else:
             target_shape = tuple(logits_sw.shape[-3:])
-
         if tuple(logits_sw.shape[-3:]) != target_shape:
             logits_sw = F.interpolate(logits_sw, size=target_shape, mode="trilinear", align_corners=False)
 
-        pred = torch.argmax(logits_sw, dim=1).to(torch.uint8)
-        # --- Sanity prints de foreground ---
-        uniq = torch.unique(pred)
-        fg = int((pred[0] > 0).sum().item())
-        tot = int(pred[0].numel())
-        print(f"[PRED] unique={uniq.tolist()}  fg_vox={fg}/{tot}  fg_ratio={fg/max(tot,1):.8f}")
-        # Métricas rápidas (Dice binario en ROI) - opcional, para logging
+        pred = torch.argmax(logits_sw, dim=1).to(torch.uint8)   # [1,D,H,W]
+
+        # --- Métrica rápida en ROI si hay label (opcional) ---
         if label is not None:
             gt = (label[0, 0] > 0).to(torch.uint8).cpu().numpy()
             pr = pred[0].to(torch.uint8).cpu().numpy()
             d = float(dice(pr, gt)) if (gt.sum() > 0 or pr.sum() > 0) else 1.0
             print(f"[ROI] Dice clase 1 = {d:.4f}  (pos_pred={int(pr.sum())}, pos_gt={int(gt.sum())})")
 
-        # ---- Guardado NIfTI con affine/header reales ----
+        # ---- Guardados ----
         out_np = pred[0].cpu().numpy().astype(np.uint8)
         out_dir = os.path.join(args.save_dir, f"fold{args.fold}")
         os.makedirs(out_dir, exist_ok=True)
 
-        # Referencia: primero label_path, si no existe usa img_path
-        ref_path = properties.get("label_path") or properties.get("img_path")
-        ref_path = _as_str_path(ref_path)
-        affine, header = None, None
+        # 1) Siempre guardamos .npy
+        np.save(os.path.join(out_dir, f"{case_name}_pred.npy"), out_np)
+        print(f"[SAVE] {os.path.join(out_dir, f'{case_name}_pred.npy')}")
+
+        # 2) Intentamos también NIfTI usando referencia si existe
+        img_ref = properties.get("img_ref", "")
+        lbl_ref = properties.get("lbl_ref", "")
+        ref_path = img_ref or lbl_ref
         try:
             if ref_path and os.path.isfile(ref_path):
                 ref_nii = nib.load(ref_path)
                 affine, header = ref_nii.affine, ref_nii.header
             else:
-                if ref_path:
-                    print(f"[WARN] ref_path no es archivo legible: '{ref_path}' -> uso identidad")
+                affine, header = np.eye(4), None
+            out_nii = nib.Nifti1Image(out_np, affine=affine, header=header)
+            nii_path = os.path.join(out_dir, f"{case_name}.nii.gz")
+            nib.save(out_nii, nii_path)
+            print(f"[SAVE] {nii_path} (ref={ref_path if ref_path else 'identity'})")
         except Exception as e:
-            print(f"[WARN] no se pudo leer referencia '{ref_path}': {e} -> uso identidad")
-
-        if affine is None:
-            affine = _np.eye(4)
-
-        out_nii = nib.Nifti1Image(out_np, affine=affine, header=header)
-        save_path = os.path.join(out_dir, f"{case_name}.nii.gz")
-        nib.save(out_nii, save_path)
-        print(f"[SAVE] {save_path} (ref={ref_path})")
+            print(f"[WARN] No se pudo guardar NIfTI para {case_name}: {e}")
 
         return 0
 
-
 # ======= Main =======
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
     # 1) IDs del hold-out del fold
     holdout_ids = _load_holdout_ids(args.fold_lists_dir, args.fold)
     print(f"[FOLD {args.fold}] holdout_ids: {len(holdout_ids)}")
 
-    # 2) Samples
-    samples = _build_samples(args.data_dir, holdout_ids)
-    assert len(samples) > 0, "No hay muestras en hold-out. Revisa rutas e IDs."
+    # 2) Filtrar por existencia en FULLRES
+    ids = _build_ids_existing(args.data_dir, holdout_ids)
+    assert len(ids) > 0, "No hay muestras en hold-out. Revisa rutas e IDs."
 
-    # 3) Transforms (sin augmentations). Mantener meta sin romper *_meta_dict.
+    # 3) Transforms mínimos (sin augmentations). Binariza label si llega.
     tf = Compose([
-        LoadImaged(keys=["image", "label"]),
-        EnsureChannelFirstd(keys=["image", "label"]),
-        ScaleIntensityRanged(keys=["image"], a_min=-1000, a_max=2000, b_min=0.0, b_max=1.0, clip=True),
-        SpatialPadd(keys=["image","label"], spatial_size=tuple(args.roi), method="end"),  # <- nuevo
-        EnsureTyped(keys=["image", "label"], track_meta=True),
+        EnsureTyped(keys=["image", "label"], dtype=("float32", "int64")),
+        Lambdad(keys=["label"], func=lambda x: (x > 0).astype(x.dtype)),
+        SpatialPadd(keys=["image","label"], spatial_size=tuple(args.roi), method="symmetric"),
     ])
 
-    def _get_path_from_item(item, key: str):
-        """
-        Devuelve la ruta del archivo desde:
-        1) item[f"{key}_meta_dict"]["filename_or_obj"] si existe, o
-        2) item[key].meta["filename_or_obj"] si es MetaTensor, o
-        3) '' si no está disponible.
-        """
-        meta_key = f"{key}_meta_dict"
-        if meta_key in item and isinstance(item[meta_key], dict):
-            if "filename_or_obj" in item[meta_key]:
-                return _as_str_path(item[meta_key]["filename_or_obj"])
-        v = item.get(key, None)
-        if hasattr(v, "meta") and isinstance(getattr(v, "meta"), dict):
-            if "filename_or_obj" in v.meta:
-                return _as_str_path(v.meta["filename_or_obj"])
-        return ""
-
-    class _WrapDataset(Dataset):
-        def __getitem__(self, index):
-            item = super().__getitem__(index)  # aplica transforms
-            data = item["image"]
-            seg = item["label"]
-
-            # IMPORTANTÍSIMO: no meter Nones en properties -> usar strings vacíos.
-            props = {
-                "name": str(item.get("case_id", f"case_{index}")),
-                "img_path": _get_path_from_item(item, "image"),
-                "label_path": _get_path_from_item(item, "label"),
-            }
-            # Nada de image_meta_dict/label_meta_dict aquí para evitar Nones en collate.
-
-            return {"data": data, "seg": seg, "properties": props}
-
-    ds = _WrapDataset(data=samples, transform=tf)
+    ds = FullresPredDataset(ids=ids, data_dir=args.data_dir, transform=tf)
 
     predictor_trainer = ColorectalPredict(device=args.device)
-    predictor_trainer.validation_single_gpu(ds)
+    # usa internamente DataLoader + SlidingWindowInferer + TTA via Predictor
+    predictor_trainer.validation_single_gpu(
+        MonaiDataset(data=[ds[i] for i in range(len(ds))], transform=None)
+    )
