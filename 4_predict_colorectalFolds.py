@@ -5,14 +5,11 @@ import torch
 import numpy as np
 import logging
 import pickle
-import json
 
 from monai.utils import set_determinism
 from monai.inferers import SlidingWindowInferer
-from monai.data import Dataset as MonaiDataset, list_data_collate
-from monai.transforms import (
-    Compose, EnsureTyped, SpatialPadd, Lambdad
-)
+from monai.data import Dataset as MonaiDataset
+from monai.transforms import Compose, EnsureTyped, SpatialPadd, Lambdad
 
 from light_training.trainer import Trainer
 from light_training.prediction import Predictor
@@ -35,8 +32,8 @@ parser.add_argument("--mirror_axes", type=int, nargs="*", default=[0, 1, 2])
 # Folds
 parser.add_argument("--fold", type=int, default=0, help="Fold index [0..4]")
 parser.add_argument("--fold_lists_dir", required=True, help="Carpeta con fold{n}_train.txt y fold{n}_val.txt")
-parser.add_argument("--prob_thresh", type=float, default=0.40)         # (no usado aquí, se deja para compat)
-parser.add_argument("--empty_fallback_q", type=float, default=0.999)    # (no usado aquí, se deja para compat)
+parser.add_argument("--prob_thresh", type=float, default=0.40)       # compat
+parser.add_argument("--empty_fallback_q", type=float, default=0.999)  # compat
 args = parser.parse_args()
 
 # ======= Utils =======
@@ -47,7 +44,6 @@ def _load_holdout_ids(fold_lists_dir: str, fold: int):
         return [l.strip() for l in f if l.strip()]
 
 def _find_meta_paths(data_dir: str, cid: str):
-
     pkl = os.path.join(data_dir, f"{cid}.pkl")
     npz = os.path.join(data_dir, f"{cid}.npz")
     img_ref = ""
@@ -56,28 +52,29 @@ def _find_meta_paths(data_dir: str, cid: str):
         if os.path.isfile(pkl):
             with open(pkl, "rb") as f:
                 d = pickle.load(f)
-            candidates_img = ["image_path", "img_path", "raw_image", "source_image", "image", "img"]
-            candidates_lbl = ["label_path", "raw_label", "source_label", "label", "seg"]
-            for k in candidates_img:
+            for k in ["image_path", "img_path", "raw_image", "source_image", "image", "img"]:
                 if k in d and isinstance(d[k], (str, list)):
                     img_ref = d[k][0] if isinstance(d[k], list) and d[k] else d[k]
                     break
-            for k in candidates_lbl:
+            for k in ["label_path", "raw_label", "source_label", "label", "seg"]:
                 if k in d and isinstance(d[k], (str, list)):
                     lbl_ref = d[k][0] if isinstance(d[k], list) and d[k] else d[k]
                     break
         elif os.path.isfile(npz):
             d = dict(np.load(npz, allow_pickle=True))
+            def _take(v):
+                if isinstance(v, np.ndarray):
+                    try:
+                        return v.item()
+                    except Exception:
+                        pass
+                return v
             for k in ["image_path", "img_path", "raw_image", "source_image", "image", "img"]:
                 if k in d:
-                    v = d[k]
-                    img_ref = v.item() if isinstance(v, np.ndarray) else v
-                    break
+                    img_ref = _take(d[k]); break
             for k in ["label_path", "raw_label", "source_label", "label", "seg"]:
                 if k in d:
-                    v = d[k]
-                    lbl_ref = v.item() if isinstance(v, np.ndarray) else v
-                    break
+                    lbl_ref = _take(d[k]); break
     except Exception as e:
         logging.warning(f"[meta] {cid}: no se pudo leer pkl/npz ({e})")
     return str(img_ref or ""), str(lbl_ref or "")
@@ -90,6 +87,29 @@ def _build_ids_existing(data_dir: str, ids):
         else:
             print(f"[WARN] Saltando {cid}: falta {cid}.npy en {data_dir}", file=sys.stderr)
     return ok
+
+def _fit_to_shape(arr, target):
+    """
+    Recorte/padding centrado para alinear pred (arr) a la forma target (Z,Y,X).
+    """
+    z = np.zeros(target, dtype=arr.dtype)
+    s_in = [0, 0, 0]
+    s_out = [0, 0, 0]
+    e_in = list(arr.shape)
+    for i in range(3):
+        if arr.shape[i] >= target[i]:
+            start = (arr.shape[i] - target[i]) // 2
+            s_in[i] = start
+            e_in[i] = start + target[i]
+            s_out[i] = 0
+        else:
+            start = (target[i] - arr.shape[i]) // 2
+            s_out[i] = start
+            e_in[i] = arr.shape[i]
+    z[s_out[0]:s_out[0] + (e_in[0] - s_in[0]),
+      s_out[1]:s_out[1] + (e_in[1] - s_in[1]),
+      s_out[2]:s_out[2] + (e_in[2] - s_in[2])] = arr[s_in[0]:e_in[0], s_in[1]:e_in[1], s_in[2]:e_in[2]]
+    return z
 
 # ======= Dataset FULLRES =======
 class FullresPredDataset(MonaiDataset):
@@ -124,7 +144,7 @@ class FullresPredDataset(MonaiDataset):
             seg = np.load(seg_p)
             if seg.ndim == 3:
                 seg = seg[None, ...]
-            sample["label"] = seg.astype(np.int64, copy=False)
+            sample["label"] = (seg > 0).astype(np.int64, copy=False)
 
         img_ref, lbl_ref = _find_meta_paths(self.data_dir, cid)
         sample["properties"] = {"name": cid, "img_ref": img_ref, "lbl_ref": lbl_ref}
@@ -143,13 +163,11 @@ class ColorectalPredict(Trainer):
         self.patch_size = args.roi
         self.augmentation = False  # sin augment en inferencia
         from model_segmamba.segmamba import SegMamba
-        self.model = SegMamba(in_chans=1, out_chans=2, depths=[2,2,2,2], feat_size=[48,96,192,384])
+        self.model = SegMamba(in_chans=1, out_chans=2, depths=[2, 2, 2, 2], feat_size=[48, 96, 192, 384])
         sd = torch.load(args.ckpt, map_location="cpu")
         if isinstance(sd, dict) and "state_dict" in sd:
             sd = sd["state_dict"]
-        # DataParallel friendly
         sd = {(k[7:] if isinstance(k, str) and k.startswith("module.") else k): v for k, v in sd.items()}
-        # strict=True para no “silenciar” capas sin cargar
         self.model.load_state_dict(sd, strict=True)
         self.model.eval().to(args.device)
 
@@ -160,7 +178,6 @@ class ColorectalPredict(Trainer):
         self.predictor = Predictor(window_infer=self.inferer, mirror_axes=args.mirror_axes)
 
     def get_input(self, batch):
-        # Estructura alineada con light_training: data/seg/properties
         img = batch["image"]          # [1,1,D,H,W] tras collate
         seg = batch.get("label", None)
         props = batch["properties"]
@@ -194,7 +211,7 @@ class ColorectalPredict(Trainer):
         if logits_sw.dim() == 4:  # [C,D,H,W] -> [1,C,D,H,W]
             logits_sw = logits_sw.unsqueeze(0)
 
-        # Ajuste a shape del label si existe (para calcular métricas en el mismo ROI)
+        # Ajuste a shape del label si existe (para métrica rápida en el mismo ROI padded)
         if label is not None:
             target_shape = tuple(label.shape[-3:])
         else:
@@ -204,26 +221,38 @@ class ColorectalPredict(Trainer):
 
         pred = torch.argmax(logits_sw, dim=1).to(torch.uint8)   # [1,D,H,W]
 
-        # --- Métrica rápida en ROI si hay label (opcional) ---
+        # --- Métrica rápida (ROI padded) ---
         if label is not None:
-            gt = (label[0, 0] > 0).to(torch.uint8).cpu().numpy()
-            pr = pred[0].to(torch.uint8).cpu().numpy()
-            d = float(dice(pr, gt)) if (gt.sum() > 0 or pr.sum() > 0) else 1.0
-            print(f"[ROI] Dice clase 1 = {d:.4f}  (pos_pred={int(pr.sum())}, pos_gt={int(gt.sum())})")
+            gt_roi = (label[0, 0] > 0).to(torch.uint8).cpu().numpy()
+            pr_roi = pred[0].to(torch.uint8).cpu().numpy()
+            d = float(dice(pr_roi, gt_roi)) if (gt_roi.sum() > 0 or pr_roi.sum() > 0) else 1.0
+            print(f"[ROI] Dice clase 1 = {d:.4f}  (pos_pred={int(pr_roi.sum())}, pos_gt={int(gt_roi.sum())})")
 
-        # ---- Guardados ----
-        out_np = pred[0].cpu().numpy().astype(np.uint8)
+        # ---- Guardados (alineado a **GT en disco** si existe) ----
+        out_np = pred[0].cpu().numpy().astype(np.uint8)   # (D,H,W)
         out_dir = os.path.join(args.save_dir, f"fold{args.fold}")
         os.makedirs(out_dir, exist_ok=True)
 
-        # 1) Siempre guardamos .npy
-        np.save(os.path.join(out_dir, f"{case_name}_pred.npy"), out_np)
-        print(f"[SAVE] {os.path.join(out_dir, f'{case_name}_pred.npy')}")
+        # Si hay GT en disco (fullres), alineamos pred a su forma (quita pad / aplica pad centrado)
+        gt_disk_path = os.path.join(args.data_dir, f"{case_name}_seg.npy")
+        if os.path.isfile(gt_disk_path):
+            gt_disk = np.load(gt_disk_path)
+            if gt_disk.ndim == 4:  # (1,D,H,W)
+                gt_disk = gt_disk[0]
+            if out_np.shape != gt_disk.shape:
+                out_np = _fit_to_shape(out_np, gt_disk.shape)
 
-        # 2) Intentamos también NIfTI usando referencia si existe
-        img_ref = properties.get("img_ref", "")
-        lbl_ref = properties.get("lbl_ref", "")
-        ref_path = img_ref or lbl_ref
+        # 1) Guardar .npy ya alineado a GT-disk (si existía)
+        npy_path = os.path.join(out_dir, f"{case_name}_pred.npy")
+        np.save(npy_path, out_np)
+        print(f"[SAVE] {npy_path}")
+
+        # 2) Intentar NIfTI (si tenemos referencia legible); si no, identidad
+        img_ref = properties.get("img_ref", "") or ""
+        lbl_ref = properties.get("lbl_ref", "") or ""
+        ref_path = str(img_ref) if isinstance(img_ref, str) else ""
+        if not ref_path and isinstance(lbl_ref, str):
+            ref_path = lbl_ref
         try:
             if ref_path and os.path.isfile(ref_path):
                 ref_nii = nib.load(ref_path)
@@ -255,17 +284,15 @@ if __name__ == "__main__":
     ids = _build_ids_existing(args.data_dir, holdout_ids)
     assert len(ids) > 0, "No hay muestras en hold-out. Revisa rutas e IDs."
 
-    # 3) Transforms mínimos (sin augmentations). Binariza label si llega.
+    # 3) Transforms mínimos (sin augmentations). Permitir ausencia de label.
     tf = Compose([
-        EnsureTyped(keys=["image", "label"], dtype=("float32", "int64")),
-        Lambdad(keys=["label"], func=lambda x: (x > 0).astype(x.dtype)),
-        SpatialPadd(keys=["image","label"], spatial_size=tuple(args.roi), method="symmetric"),
+        EnsureTyped(keys=["image", "label"], dtype=("float32", "int64"), allow_missing_keys=True),
+        Lambdad(keys=["label"], func=lambda x: (x > 0).astype(x.dtype), allow_missing_keys=True),
+        SpatialPadd(keys=["image", "label"], spatial_size=tuple(args.roi), method="symmetric", allow_missing_keys=True),
     ])
 
     ds = FullresPredDataset(ids=ids, data_dir=args.data_dir, transform=tf)
 
     predictor_trainer = ColorectalPredict(device=args.device)
-    # usa internamente DataLoader + SlidingWindowInferer + TTA via Predictor
-    predictor_trainer.validation_single_gpu(
-        MonaiDataset(data=[ds[i] for i in range(len(ds))], transform=None)
-    )
+    # El Trainer construye su propio DataLoader; le pasamos el dataset directamente
+    predictor_trainer.validation_single_gpu(ds)
