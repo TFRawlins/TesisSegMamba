@@ -5,20 +5,20 @@ from pathlib import Path
 import nibabel as nib
 
 # === RUTAS DE ENTRADA (nnU-Net RAW) ===
-NNUNET_BASE = Path("/home/trawlins/tesis/data_nnUnet/nnUNet_raw/Dataset001_Colorectal")
-IMAGES_TR = NNUNET_BASE / "imagesTr"
-LABELS_TR = NNUNET_BASE / "labelsTr"
+NNUNET_BASE = Path("/home/trawlins/tesis/data/LITS/raw/LITS")
+IMAGES_TR = NNUNET_BASE / "images"
+LABELS_TR = NNUNET_BASE / "masks"
 
 # === STAGING (crudos por-caso estilo repo original) ===
-base_dir  = "/home/trawlins/tesis/data/colorectal/raw_data"
-image_dir = "ColorectalVessels"
+base_dir  = "/home/trawlins/tesis/data/LITS/raw_data"
+image_dir = "LITS"
 data_filename = ["image.nii.gz"]
 seg_filename  = "seg.nii.gz"
 
 # === SALIDA FULLRES (arrays + properties) ===
-OUTPUT_FULLRES_ROOT = Path("/home/trawlins/tesis/data/colorectal/fullres/colorectal")
+OUTPUT_FULLRES_ROOT = Path("/home/trawlins/tesis/data/LITS/fullres/lits")
 # (Opcional) lugar donde están tus listas de folds paciente-wise:
-FOLD_LISTS_DIR = Path("/home/trawlins/tesis/data/colorectal/fold_lists")  # fold{0..4}_{train,val}.txt
+FOLD_LISTS_DIR = Path("/home/trawlins/tesis/data/LITS/fold_lists")  # fold{0..4}_{train,val}.txt
 
 def prepare_from_nnunet_to_rawdata(dryrun=False):
     out_root = Path(base_dir) / image_dir
