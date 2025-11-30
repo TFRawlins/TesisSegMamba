@@ -5,7 +5,7 @@ from pathlib import Path
 import nibabel as nib
 
 # === RUTAS DE ENTRADA (nnU-Net RAW) ===
-NNUNET_BASE = Path("/home/trawlins/tesis/data/LITS/raw/LITS")
+NNUNET_BASE = Path("/home/trawlins/tesis/data/LITS/raw")
 IMAGES_TR = NNUNET_BASE / "images"
 LABELS_TR = NNUNET_BASE / "masks"
 
