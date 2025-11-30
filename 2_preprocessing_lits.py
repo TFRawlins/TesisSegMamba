@@ -73,15 +73,28 @@ def prepare_from_nnunet_to_rawdata(dryrun=False):
 
 def median_spacing_from_nnunet_raw() -> tuple[float, float, float]:
     """Lee spacings de imagesTr y devuelve mediana (Z,Y,X)."""
-    imgs = sorted(IMAGES_TR.glob("*_0000.nii.gz")) or sorted(IMAGES_TR.glob("*.nii.gz"))
+    # Acepta .nii.gz o .nii con sufijo _0000
+    imgs = sorted(IMAGES_TR.glob("*_0000.nii.gz"))
+    if not imgs:
+        imgs = sorted(IMAGES_TR.glob("*_0000.nii"))
+    if not imgs:
+        # fallback por si tus imágenes quedaron sin _0000
+        imgs = sorted(IMAGES_TR.glob("*.nii.gz")) or sorted(IMAGES_TR.glob("*.nii"))
+
     spacings = []
     for p in imgs:
         hdr = nib.load(str(p)).header
-        # nibabel da pixdim en orden (x,y,z); devolvemos (Z,Y,X) para MONAI/nuestro uso
+        # nibabel da pixdim en orden (x,y,z); devolvemos (Z,Y,X)
         sx, sy, sz = map(float, hdr.get_zooms()[:3])
         spacings.append([sz, sy, sx])
-    med = np.median(np.asarray(spacings), axis=0).tolist()
-    return tuple(float(x) for x in med)
+
+    spacings = np.asarray(spacings)
+    if spacings.size == 0:
+        raise RuntimeError("No se encontraron imágenes para calcular la mediana de spacing.")
+
+    med = np.median(spacings, axis=0)  # <-- med es ahora [Z_med, Y_med, X_med]
+    return float(med[0]), float(med[1]), float(med[2])
+
 
 def plan():
     pre = MultiModalityPreprocessor(
@@ -131,10 +144,10 @@ def export_manifest_and_folds():
 
 if __name__ == "__main__":
     # 1) staging desde nnU-Net raw
-    prepare_from_nnunet_to_rawdata(dryrun=False)
+    #prepare_from_nnunet_to_rawdata(dryrun=False)
 
     # 2) plan (stats)
-    plan()
+    #plan()
 
     # 3) escoger spacing objetivo desde mediana del dataset
     med_spacing = median_spacing_from_nnunet_raw()
