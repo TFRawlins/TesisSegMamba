@@ -26,8 +26,19 @@ def prepare_from_nnunet_to_rawdata(dryrun=False):
     if not IMAGES_TR.exists() or not LABELS_TR.exists():
         raise RuntimeError(f"Rutas no existen:\n  IMAGES_TR={IMAGES_TR}\n  LABELS_TR={LABELS_TR}")
 
-    imgs = sorted(IMAGES_TR.glob("*_0000.nii.gz")) or sorted(IMAGES_TR.glob("*.nii.gz"))
+        # Buscar imágenes en varios formatos posibles
+    imgs = sorted(IMAGES_TR.glob("*_0000.nii.gz"))
+    if not imgs:
+        imgs = sorted(IMAGES_TR.glob("*.nii.gz"))
+    if not imgs:
+        imgs = sorted(IMAGES_TR.glob("*_0000.nii"))
+    if not imgs:
+        imgs = sorted(IMAGES_TR.glob("*.nii"))
+
     lbls = sorted(LABELS_TR.glob("*.nii.gz"))
+    if not lbls:
+        lbls = sorted(LABELS_TR.glob("*.nii"))
+
 
     num_re = re.compile(r"(\d+)")
     def id_from_img(p: Path) -> str:
