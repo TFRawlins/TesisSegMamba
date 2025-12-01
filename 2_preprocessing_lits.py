@@ -144,10 +144,10 @@ def export_manifest_and_folds():
 
 if __name__ == "__main__":
     # 1) staging desde nnU-Net raw
-    #prepare_from_nnunet_to_rawdata(dryrun=False)
+    prepare_from_nnunet_to_rawdata(dryrun=False)
 
     # 2) plan (stats)
-    #plan()
+    plan()
 
     # 3) escoger spacing objetivo desde mediana del dataset
     med_spacing = median_spacing_from_nnunet_raw()
