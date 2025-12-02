@@ -191,7 +191,7 @@ train_transforms = Compose([
     # *** Fuerza label binario: cualquier valor >0 pasa a 1
     Lambdad(keys=["label"], func=lambda x: (x > 0).astype(x.dtype)),
 
-    CropForegroundd(keys=["image", "label"], source_key="image", margin=8),
+    #CropForegroundd(keys=["image", "label"], source_key="image", margin=8),
     SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="symmetric"),
 
     RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
@@ -215,7 +215,7 @@ val_transforms = Compose([
     # *** Igual en validación
     Lambdad(keys=["label"], func=lambda x: (x > 0).astype(x.dtype)),
 
-    CropForegroundd(keys=["image", "label"], source_key="image", margin=8),
+    #CropForegroundd(keys=["image", "label"], source_key="image", margin=8),
     SpatialPadd(keys=["image", "label"], spatial_size=ROI_SIZE, method="symmetric"),
 ])
 
