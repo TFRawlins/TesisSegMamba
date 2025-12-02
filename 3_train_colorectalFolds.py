@@ -371,7 +371,7 @@ if __name__ == "__main__":
     train_base = FullresArrayDataset(train_ids, DATA_DIR)
     val_base   = FullresArrayDataset(val_ids,   DATA_DIR)
 
-    use_cache = True
+    use_cache = False
     if use_cache:
         train_ds = CacheDataset(
             data=[train_base[i] for i in range(len(train_base))],
