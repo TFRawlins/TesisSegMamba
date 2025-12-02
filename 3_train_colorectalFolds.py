@@ -242,7 +242,7 @@ class ColorectalVesselsTrainer(Trainer):
 
         # Inferencia deslizante con mayor solape (mejor en bordes finos)
         self.window_infer = SlidingWindowInferer(
-            roi_size=ROI_SIZE, sw_batch_size=args.sw_batch_size, overlap=0.75
+            roi_size=ROI_SIZE, sw_batch_size=args.sw_batch_size, overlap=0.5
         )
 
         from model_segmamba.segmamba import SegMamba
