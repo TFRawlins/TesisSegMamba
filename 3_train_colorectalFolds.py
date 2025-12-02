@@ -73,7 +73,7 @@ parser.add_argument(
 parser.add_argument("--val_ratio_internal", type=float, default=0.1, help="Porción del train para validación interna")
 # ROI / workers
 parser.add_argument("--roi", type=int, nargs=3, default=[128, 128, 128])
-parser.add_argument("--num_workers", type=int, default=0)  # 0 para errores legibles
+parser.add_argument("--num_workers", type=int, default=4)  # 0 para errores legibles
 args = parser.parse_args()
 
 # =====================
