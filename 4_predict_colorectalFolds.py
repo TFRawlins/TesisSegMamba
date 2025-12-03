@@ -175,7 +175,8 @@ class ColorectalPredict(Trainer):
             roi_size=args.roi, sw_batch_size=args.sw_batch_size,
             overlap=args.overlap, mode="gaussian"
         )
-        self.predictor = Predictor(window_infer=self.inferer, mirror_axes=args.mirror_axes)
+        mirror_axes = args.mirror_axes if len(args.mirror_axes) > 0 else None
+        self.predictor = Predictor(window_infer=self.inferer, mirror_axes=mirror_axes)
 
     def get_input(self, batch):
         img = batch["image"]          # [1,1,D,H,W] tras collate
