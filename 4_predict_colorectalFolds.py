@@ -28,7 +28,7 @@ parser.add_argument("--device", default="cuda:0")
 parser.add_argument("--roi", type=int, nargs=3, default=[128, 128, 128])
 parser.add_argument("--sw_batch_size", type=int, default=2)
 parser.add_argument("--overlap", type=float, default=0.5)
-parser.add_argument("--mirror_axes", type=int, nargs="*", default=[0, 1, 2])
+parser.add_argument("--mirror_axes", type=int, nargs="*", default=[])
 # Folds
 parser.add_argument("--fold", type=int, default=0, help="Fold index [0..4]")
 parser.add_argument("--fold_lists_dir", required=True, help="Carpeta con fold{n}_train.txt y fold{n}_val.txt")
